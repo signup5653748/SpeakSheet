@@ -28,7 +28,12 @@ android {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
       storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
+      val isReleaseBuild = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+      val alias = System.getenv("KEY_ALIAS")
+      if (isReleaseBuild && alias.isNullOrEmpty()) {
+        throw GradleException("KEY_ALIAS environment variable is not set")
+      }
+      keyAlias = alias ?: ""
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
