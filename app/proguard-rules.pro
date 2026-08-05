@@ -26,3 +26,16 @@
 -dontwarn net.sf.saxon.**
 -dontwarn org.osgi.**
 -dontwarn org.apache.xmlbeans.**
+-dontwarn javax.xml.**
+-dontwarn org.apache.poi.**
+
+# Keep Apache POI and XMLBeans
+-keep class org.apache.poi.** { *; }
+-keep class org.apache.xmlbeans.** { *; }
+-keep class org.openxmlformats.** { *; }
+-keep class schemaorg_apache_xmlbeans.** { *; }
+-keep class org.apache.commons.compress.** { *; }
+
+# Keep Aalto XML for POI
+-keep class com.fasterxml.aalto.** { *; }
+-keep class javax.xml.stream.** { *; }

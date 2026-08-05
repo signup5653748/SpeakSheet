@@ -122,6 +122,8 @@ dependencies {
   
   implementation(libs.poi)
   implementation(libs.poi.ooxml)
+  implementation("javax.xml.stream:stax-api:1.0-2")
+  implementation("com.fasterxml:aalto-xml:1.3.2")
   implementation(libs.opencsv)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

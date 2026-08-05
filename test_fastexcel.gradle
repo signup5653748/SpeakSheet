@@ -1,0 +1,9 @@
+plugins {
+    id 'java'
+}
+repositories {
+    mavenCentral()
+}
+dependencies {
+    implementation 'org.dhatim:fastexcel-reader:0.18.3'
+}
