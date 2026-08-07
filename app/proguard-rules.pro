@@ -39,3 +39,13 @@
 # Keep Aalto XML for POI
 -keep class com.fasterxml.aalto.** { *; }
 -keep class javax.xml.stream.** { *; }
+
+# Fix for missing classes inside org.openxmlformats and org.tukaani.xz
+-dontwarn org.openxmlformats.schemas.**
+-dontwarn org.tukaani.xz.**
+-keep class org.tukaani.xz.** { *; }
+
+# Fix for missing Commons Compress optional dependencies
+-dontwarn com.github.luben.zstd.**
+-dontwarn org.brotli.dec.**
+-dontwarn org.objectweb.asm.**

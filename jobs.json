@@ -1,0 +1,321 @@
+{
+  "total_count": 3,
+  "jobs": [
+    {
+      "id": 92831988886,
+      "run_id": 31167624146,
+      "workflow_name": "Build Release APK (Auto-Detect Signing)",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/signup5653748/SpeakSheet/actions/runs/31167624146",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTt5lL88AAAAVnTe8lg",
+      "head_sha": "f916fc9e99ea1afeb57e8bf7f5ad908302b1fac4",
+      "url": "https://api.github.com/repos/signup5653748/SpeakSheet/actions/jobs/92831988886",
+      "html_url": "https://github.com/signup5653748/SpeakSheet/actions/runs/31167624146/job/92831988886",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-08-07T09:51:05Z",
+      "started_at": "2026-08-07T09:51:06Z",
+      "completed_at": "2026-08-07T09:51:11Z",
+      "name": "Detect Project + Signing Configuration",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-08-07T09:51:07Z",
+          "completed_at": "2026-08-07T09:51:08Z"
+        },
+        {
+          "name": "Checkout Code",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-08-07T09:51:08Z",
+          "completed_at": "2026-08-07T09:51:09Z"
+        },
+        {
+          "name": "Detect Everything",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-08-07T09:51:09Z",
+          "completed_at": "2026-08-07T09:51:09Z"
+        },
+        {
+          "name": "Write Detection Summary",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-08-07T09:51:09Z",
+          "completed_at": "2026-08-07T09:51:09Z"
+        },
+        {
+          "name": "Post Checkout Code",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-08-07T09:51:09Z",
+          "completed_at": "2026-08-07T09:51:09Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-08-07T09:51:09Z",
+          "completed_at": "2026-08-07T09:51:09Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/signup5653748/SpeakSheet/check-runs/92831988886",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000000372,
+      "runner_name": "GitHub Actions 1000000372",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 92832013671,
+      "run_id": 31167624146,
+      "workflow_name": "Build Release APK (Auto-Detect Signing)",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/signup5653748/SpeakSheet/actions/runs/31167624146",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTt5lL88AAAAVnTgdZw",
+      "head_sha": "f916fc9e99ea1afeb57e8bf7f5ad908302b1fac4",
+      "url": "https://api.github.com/repos/signup5653748/SpeakSheet/actions/jobs/92832013671",
+      "html_url": "https://github.com/signup5653748/SpeakSheet/actions/runs/31167624146/job/92832013671",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-08-07T09:51:11Z",
+      "started_at": "2026-08-07T09:51:13Z",
+      "completed_at": "2026-08-07T09:53:15Z",
+      "name": "Build Signed Release APK",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-08-07T09:51:15Z",
+          "completed_at": "2026-08-07T09:51:18Z"
+        },
+        {
+          "name": "Checkout Code",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-08-07T09:51:18Z",
+          "completed_at": "2026-08-07T09:51:20Z"
+        },
+        {
+          "name": "Enforce Canonical Signing Config",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-08-07T09:51:20Z",
+          "completed_at": "2026-08-07T09:51:20Z"
+        },
+        {
+          "name": "Set up JDK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-08-07T09:51:20Z",
+          "completed_at": "2026-08-07T09:51:20Z"
+        },
+        {
+          "name": "Setup Gradle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-08-07T09:51:20Z",
+          "completed_at": "2026-08-07T09:51:35Z"
+        },
+        {
+          "name": "Ensure Valid Gradle Wrapper",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-08-07T09:51:35Z",
+          "completed_at": "2026-08-07T09:51:58Z"
+        },
+        {
+          "name": "Install Detected Android SDK Platform",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7,
+          "started_at": "2026-08-07T09:51:58Z",
+          "completed_at": "2026-08-07T09:51:58Z"
+        },
+        {
+          "name": "Decode Keystore and Auto-Detect Alias",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-08-07T09:51:58Z",
+          "completed_at": "2026-08-07T09:51:59Z"
+        },
+        {
+          "name": "Build with Gradle",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 9,
+          "started_at": "2026-08-07T09:51:59Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Wipe Keystore from Runner",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Set Release Info",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Locate APK",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Upload APK Artifact",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Create Release",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 14,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Build Release History",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 15,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Update Rolling \"latest\" Release",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 16,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:07Z"
+        },
+        {
+          "name": "Post Setup Gradle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 30,
+          "started_at": "2026-08-07T09:53:07Z",
+          "completed_at": "2026-08-07T09:53:12Z"
+        },
+        {
+          "name": "Post Set up JDK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 31,
+          "started_at": "2026-08-07T09:53:12Z",
+          "completed_at": "2026-08-07T09:53:12Z"
+        },
+        {
+          "name": "Post Checkout Code",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 32,
+          "started_at": "2026-08-07T09:53:12Z",
+          "completed_at": "2026-08-07T09:53:12Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 33,
+          "started_at": "2026-08-07T09:53:12Z",
+          "completed_at": "2026-08-07T09:53:12Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/signup5653748/SpeakSheet/check-runs/92832013671",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000000373,
+      "runner_name": "GitHub Actions 1000000373",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 92832462594,
+      "run_id": 31167624146,
+      "workflow_name": "Build Release APK (Auto-Detect Signing)",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/signup5653748/SpeakSheet/actions/runs/31167624146",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTt5lL88AAAAVnT73Ag",
+      "head_sha": "f916fc9e99ea1afeb57e8bf7f5ad908302b1fac4",
+      "url": "https://api.github.com/repos/signup5653748/SpeakSheet/actions/jobs/92832462594",
+      "html_url": "https://github.com/signup5653748/SpeakSheet/actions/runs/31167624146/job/92832462594",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-08-07T09:53:16Z",
+      "started_at": "2026-08-07T09:53:18Z",
+      "completed_at": "2026-08-07T09:53:25Z",
+      "name": "Publish Failure Log",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-08-07T09:53:19Z",
+          "completed_at": "2026-08-07T09:53:19Z"
+        },
+        {
+          "name": "Fetch All Job Logs and Publish to ci-logs Branch",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-08-07T09:53:19Z",
+          "completed_at": "2026-08-07T09:53:24Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-08-07T09:53:24Z",
+          "completed_at": "2026-08-07T09:53:24Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/signup5653748/SpeakSheet/check-runs/92832462594",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000000374,
+      "runner_name": "GitHub Actions 1000000374",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    }
+  ]
+}
