@@ -1,0 +1,12 @@
+===== JOB: Detect Project + Signing Configuration (status: success) =====
+[Could not fetch log: HTTP Error 401: Server failed to authenticate the request. Please refer to the information in the www-authenticate header.]
+
+
+===== JOB: Build Signed Release APK (status: failure) =====
+[Could not fetch log: HTTP Error 401: Server failed to authenticate the request. Please refer to the information in the www-authenticate header.]
+
+
+===== JOB: Publish Failure Log (status: None) =====
+[Could not fetch log: HTTP Error 401: Server failed to authenticate the request. Please refer to the information in the www-authenticate header.]
+
+
