@@ -49,3 +49,22 @@
 -dontwarn com.github.luben.zstd.**
 -dontwarn org.brotli.dec.**
 -dontwarn org.objectweb.asm.**
+
+# Additional Apache POI rules for Android to prevent runtime crashes
+-dontwarn org.apache.**
+-dontwarn org.etsi.**
+-dontwarn org.w3.**
+-dontwarn com.microsoft.schemas.**
+-dontwarn com.graphbuilder.**
+
+-dontnote org.apache.**
+-dontnote org.openxmlformats.schemas.**
+-dontnote org.etsi.**
+-dontnote org.w3.**
+-dontnote com.microsoft.schemas.**
+-dontnote com.graphbuilder.**
+
+-keeppackagenames org.apache.poi.ss.formula.function
+-keep class schemaorg_apache_xmlbeans.** { *; }
+-keep class org.apache.xmlbeans.impl.schema.BuiltinSchemaTypeSystem { public static *** get*(); }
+
