@@ -67,4 +67,3 @@
 -keeppackagenames org.apache.poi.ss.formula.function
 -keep class schemaorg_apache_xmlbeans.** { *; }
 -keep class org.apache.xmlbeans.impl.schema.BuiltinSchemaTypeSystem { public static *** get*(); }
-
