@@ -30,9 +30,10 @@ fun SpeakSheetTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
+            val window = (view.context as? Activity)?.window
+            window?.let {
+                WindowCompat.getInsetsController(it, view).isAppearanceLightStatusBars = false
+            }
         }
     }
 

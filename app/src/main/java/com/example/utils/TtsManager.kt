@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 
-class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
+class TtsManager(context: Context) : TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
     
@@ -20,54 +20,88 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     val availableVoices: StateFlow<List<Voice>> = _availableVoices.asStateFlow()
 
     init {
-        tts = TextToSpeech(context, this, "com.google.android.tts")
+        try {
+            tts = TextToSpeech(context.applicationContext, this)
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Failed to construct TextToSpeech", e)
+        }
     }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.US
-            _isInitialized.value = true
-            loadAvailableVoices()
-        } else {
-            // Fallback to default engine if Google TTS is not available
-            if (tts?.defaultEngine != "com.google.android.tts") {
-                 tts = TextToSpeech(context, this)
-            } else {
-                 Log.e("TtsManager", "Initialization Failed!")
+            try {
+                val result = tts?.setLanguage(Locale.US)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts?.language = Locale.getDefault()
+                }
+                _isInitialized.value = true
+                loadAvailableVoices()
+            } catch (e: Exception) {
+                Log.e("TtsManager", "Error setting language", e)
+                _isInitialized.value = true
             }
+        } else {
+            Log.e("TtsManager", "TextToSpeech Initialization Failed with status $status")
         }
     }
 
     private fun loadAvailableVoices() {
-        val voices = tts?.voices?.toList()?.filter { !it.isNetworkConnectionRequired }
-        if (voices != null) {
-            _availableVoices.value = voices.sortedBy { it.locale.displayName }
+        try {
+            val voices = tts?.voices?.toList()?.filter { !it.isNetworkConnectionRequired }
+            if (voices != null) {
+                _availableVoices.value = voices.sortedBy { it.locale.displayName }
+            }
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error loading voices", e)
         }
     }
 
     fun speak(text: String) {
-        if (_isInitialized.value) {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+        if (_isInitialized.value && text.isNotBlank()) {
+            try {
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "speaksheet_utterance")
+            } catch (e: Exception) {
+                Log.e("TtsManager", "Error speaking text", e)
+            }
         }
     }
     
     fun setVoice(voiceName: String) {
-        val voice = _availableVoices.value.find { it.name == voiceName }
-        if (voice != null) {
-            tts?.voice = voice
+        try {
+            val voice = _availableVoices.value.find { it.name == voiceName }
+            if (voice != null) {
+                tts?.voice = voice
+            }
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error setting voice", e)
         }
     }
 
     fun setSpeechRate(rate: Float) {
-        tts?.setSpeechRate(rate)
+        try {
+            tts?.setSpeechRate(rate)
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error setting speech rate", e)
+        }
     }
 
     fun setPitch(pitch: Float) {
-        tts?.setPitch(pitch)
+        try {
+            tts?.setPitch(pitch)
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error setting pitch", e)
+        }
     }
 
     fun shutdown() {
-        tts?.stop()
-        tts?.shutdown()
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error shutting down TTS", e)
+        } finally {
+            tts = null
+            _isInitialized.value = false
+        }
     }
 }

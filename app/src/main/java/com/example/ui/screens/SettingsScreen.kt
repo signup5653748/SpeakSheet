@@ -4,7 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,7 +32,7 @@ fun SettingsScreen(
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -104,6 +104,8 @@ fun SettingsScreen(
 
             item { SettingsHeader("Accessibility Settings") }
             
+            item { SwitchSetting("Show left side row numbers", settings.showRowNumbers) { viewModel.updateSettings(settings.copy(showRowNumbers = it)) } }
+            item { SwitchSetting("Speak column header first (otherwise content first)", settings.announceColumnFirst) { viewModel.updateSettings(settings.copy(announceColumnFirst = it)) } }
             item { SwitchSetting("Speak row number", settings.speakRowNumber) { viewModel.updateSettings(settings.copy(speakRowNumber = it)) } }
             item { SwitchSetting("Speak column name", settings.speakColumnName) { viewModel.updateSettings(settings.copy(speakColumnName = it)) } }
             item { SwitchSetting("Speak formulas", settings.speakFormulas) { viewModel.updateSettings(settings.copy(speakFormulas = it)) } }

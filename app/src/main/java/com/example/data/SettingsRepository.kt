@@ -35,7 +35,9 @@ data class AppSettings(
     val largeTouchMode: Boolean = true,
     val highContrastGrid: Boolean = false,
     val defaultRows: Int = 1000,
-    val defaultCols: Int = 26
+    val defaultCols: Int = 26,
+    val announceColumnFirst: Boolean = true,
+    val showRowNumbers: Boolean = true
 )
 
 class SettingsRepository(private val context: Context) {
@@ -56,6 +58,8 @@ class SettingsRepository(private val context: Context) {
         val HIGH_CONTRAST = booleanPreferencesKey("high_contrast")
         val DEFAULT_ROWS = intPreferencesKey("default_rows")
         val DEFAULT_COLS = intPreferencesKey("default_cols")
+        val ANNOUNCE_COLUMN_FIRST = booleanPreferencesKey("announce_column_first")
+        val SHOW_ROW_NUMBERS = booleanPreferencesKey("show_row_numbers")
     }
 
     val appSettingsFlow: Flow<AppSettings> = context.dataStore.data
@@ -75,7 +79,9 @@ class SettingsRepository(private val context: Context) {
                 largeTouchMode = preferences[PreferencesKeys.LARGE_TOUCH] ?: true,
                 highContrastGrid = preferences[PreferencesKeys.HIGH_CONTRAST] ?: false,
                 defaultRows = preferences[PreferencesKeys.DEFAULT_ROWS] ?: 1000,
-                defaultCols = preferences[PreferencesKeys.DEFAULT_COLS] ?: 26
+                defaultCols = preferences[PreferencesKeys.DEFAULT_COLS] ?: 26,
+                announceColumnFirst = preferences[PreferencesKeys.ANNOUNCE_COLUMN_FIRST] ?: true,
+                showRowNumbers = preferences[PreferencesKeys.SHOW_ROW_NUMBERS] ?: true
             )
         }
 
@@ -96,6 +102,8 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.HIGH_CONTRAST] = settings.highContrastGrid
             preferences[PreferencesKeys.DEFAULT_ROWS] = settings.defaultRows
             preferences[PreferencesKeys.DEFAULT_COLS] = settings.defaultCols
+            preferences[PreferencesKeys.ANNOUNCE_COLUMN_FIRST] = settings.announceColumnFirst
+            preferences[PreferencesKeys.SHOW_ROW_NUMBERS] = settings.showRowNumbers
         }
     }
 }

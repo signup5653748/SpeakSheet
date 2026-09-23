@@ -11,6 +11,9 @@ interface RecentFileDao {
     @Query("SELECT * FROM recent_files ORDER BY lastModified DESC")
     fun getAllRecentFiles(): Flow<List<RecentFile>>
 
+    @Query("SELECT * FROM recent_files ORDER BY lastModified DESC")
+    suspend fun getRecentFilesList(): List<RecentFile>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRecentFile(recentFile: RecentFile)
 
