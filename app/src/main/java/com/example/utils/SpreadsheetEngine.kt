@@ -31,6 +31,10 @@ class SpreadsheetEngine {
     private var isLayoutDirty = true
     var currentDensity = 1f
         private set
+    var currentZoom = 1.0f
+        private set
+    var currentLargeTouch = false
+        private set
 
     var totalWidthPx = 0f
         private set
@@ -191,12 +195,13 @@ class SpreadsheetEngine {
         isLayoutDirty = true
     }
 
-    fun getRowHeightDp(r: Int): Float {
+    fun getRowHeightDp(r: Int, largeTouch: Boolean = currentLargeTouch): Float {
+        val base = if (largeTouch) 44f else defaultRowHeightDp
         val row = sheet.getRow(r)
         return if (row != null && row.heightInPoints != sheet.defaultRowHeightInPoints && row.heightInPoints > 15f) {
-            (row.heightInPoints * 1.33f).coerceIn(28f, 60f)
+            (row.heightInPoints * 1.33f).coerceIn(base, 70f)
         } else {
-            defaultRowHeightDp
+            base
         }
     }
 
@@ -207,13 +212,16 @@ class SpreadsheetEngine {
         return defaultColWidthDp
     }
 
-    fun updateLayoutIfNeeded(density: Float) {
-        if (!isLayoutDirty && density == currentDensity && 
+    fun updateLayoutIfNeeded(density: Float, zoom: Float = 1.0f, largeTouch: Boolean = false) {
+        val effectiveDensity = density * zoom
+        if (!isLayoutDirty && effectiveDensity == currentDensity && currentLargeTouch == largeTouch &&
             rowOffsetsPx.size == maxRow && colOffsetsPx.size == maxCol) {
             return
         }
         
-        currentDensity = density
+        currentDensity = effectiveDensity
+        currentZoom = zoom
+        currentLargeTouch = largeTouch
         rowOffsetsPx = FloatArray(maxRow)
         colOffsetsPx = FloatArray(maxCol)
         colWidthsDp = FloatArray(maxCol)
@@ -235,14 +243,14 @@ class SpreadsheetEngine {
         var currentY = 0f
         for (r in 0 until maxRow) {
             rowOffsetsPx[r] = currentY
-            currentY += getRowHeightDp(r) * density
+            currentY += getRowHeightDp(r, largeTouch) * effectiveDensity
         }
         totalHeightPx = currentY
         
         var currentX = 0f
         for (c in 0 until maxCol) {
             colOffsetsPx[c] = currentX
-            currentX += getColWidthDp(c) * density
+            currentX += getColWidthDp(c) * effectiveDensity
         }
         totalWidthPx = currentX
         
