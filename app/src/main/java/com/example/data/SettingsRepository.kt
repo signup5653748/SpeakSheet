@@ -68,7 +68,7 @@ class SettingsRepository(private val context: Context) {
                 voiceName = preferences[PreferencesKeys.VOICE_NAME] ?: "",
                 speechRate = preferences[PreferencesKeys.SPEECH_RATE] ?: 1.0f,
                 pitch = preferences[PreferencesKeys.PITCH] ?: 1.0f,
-                interactionMode = InteractionMode.values()[preferences[PreferencesKeys.INTERACTION_MODE] ?: InteractionMode.SINGLE_TAP_SPEAK_LONG_PRESS_MENU.ordinal],
+                interactionMode = InteractionMode.entries.getOrElse(preferences[PreferencesKeys.INTERACTION_MODE] ?: 0) { InteractionMode.SINGLE_TAP_SPEAK_LONG_PRESS_MENU },
                 speakRowNumber = preferences[PreferencesKeys.SPEAK_ROW_NUM] ?: true,
                 speakColumnName = preferences[PreferencesKeys.SPEAK_COL_NAME] ?: true,
                 speakFormulas = preferences[PreferencesKeys.SPEAK_FORMULAS] ?: false,

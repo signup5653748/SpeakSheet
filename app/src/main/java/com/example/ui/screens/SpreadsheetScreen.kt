@@ -7,6 +7,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -42,6 +43,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -55,9 +57,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.theme.GreenPrimary
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -67,9 +71,9 @@ fun SpreadsheetScreen(
     viewModel: MainViewModel,
     onNavigateBack: () -> Unit
 ) {
-    val fileName by viewModel.currentFileName.collectAsState()
-    val settings by viewModel.appSettings.collectAsState()
-    val refreshTrigger by viewModel.gridRefreshTrigger.collectAsState()
+    val fileName by viewModel.currentFileName.collectAsStateWithLifecycle()
+    val settings by viewModel.appSettings.collectAsStateWithLifecycle()
+    val refreshTrigger by viewModel.gridRefreshTrigger.collectAsStateWithLifecycle()
     val engine = viewModel.spreadsheetEngine
     val context = LocalContext.current
     val density = LocalDensity.current.density
@@ -80,12 +84,17 @@ fun SpreadsheetScreen(
     var showMenuForCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showOptionsMenu by remember { mutableStateOf(false) }
 
-    // Scroll state with smooth animation support
-    val animScrollX = remember { Animatable(0f) }
-    val animScrollY = remember { Animatable(0f) }
+    // Pan offset state with smooth animation support
+    val animPanOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val panChannel = remember { Channel<Offset>(Channel.CONFLATED) }
+    LaunchedEffect(Unit) {
+        for (pan in panChannel) {
+            animPanOffset.snapTo(pan)
+        }
+    }
     var scrollJob by remember { mutableStateOf<Job?>(null) }
 
-    // Pure image-like two-finger zoom
+    // Pure image/PDF-like canvas scale-transform zoom
     var userZoom by remember { mutableFloatStateOf(1.0f) }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     var lastTapTimestamp by remember { mutableLongStateOf(0L) }
@@ -120,24 +129,87 @@ fun SpreadsheetScreen(
         }
     }
 
-    val textMeasurer = rememberTextMeasurer()
+    val textMeasurer = rememberTextMeasurer(cacheSize = 512)
     val textStyle = MaterialTheme.typography.bodyMedium.copy(
         color = MaterialTheme.colorScheme.onBackground,
         fontSize = 13.sp
     )
+    val headerRowStyle = textStyle.copy(fontWeight = FontWeight.Bold, color = GreenPrimary)
     val headerStyle = MaterialTheme.typography.labelMedium.copy(
         color = MaterialTheme.colorScheme.onSurface,
         fontWeight = FontWeight.Bold,
         fontSize = 11.sp
     )
+    val headerStyleNormal = remember(headerStyle) { headerStyle }
+    val headerStyleSelected = remember(headerStyle) { headerStyle.copy(color = GreenPrimary) }
 
     val gridColor = if (settings.highContrastGrid) Color(0xFF888888) else Color(0xFF444444)
     val headerBg = MaterialTheme.colorScheme.surface
     val highlightFill = GreenPrimary.copy(alpha = 0.22f)
 
-    // Ensure layout cache is updated
-    LaunchedEffect(refreshTrigger, density, userZoom, settings.largeTouchMode) {
-        engine.updateLayoutIfNeeded(density, userZoom, settings.largeTouchMode)
+    // Ensure layout cache is updated for unscaled density and largeTouchMode only (never on zoom)
+    LaunchedEffect(refreshTrigger, density, settings.largeTouchMode) {
+        engine.updateLayoutIfNeeded(density, settings.largeTouchMode)
+    }
+
+    fun clampPan(offset: Offset, zoom: Float): Offset {
+        val viewW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 1000f
+        val viewH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f
+        val headerW = if (settings.showRowNumbers) 44f * density else 0f
+        val headerH = 32f * density
+        val contentW = (engine.totalWidthPx + headerW) * zoom
+        val contentH = (engine.totalHeightPx + headerH) * zoom
+        val margin = 48f * density
+
+        val minX: Float
+        val maxX: Float
+        if (contentW > viewW) {
+            minX = viewW - contentW - margin
+            maxX = margin
+        } else {
+            minX = -margin
+            maxX = (viewW - contentW) + margin
+        }
+
+        val minY: Float
+        val maxY: Float
+        if (contentH > viewH) {
+            minY = viewH - contentH - margin
+            maxY = margin
+        } else {
+            minY = -margin
+            maxY = (viewH - contentH) + margin
+        }
+
+        return Offset(
+            x = offset.x.coerceIn(minOf(minX, maxX), maxOf(minX, maxX)),
+            y = offset.y.coerceIn(minOf(minY, maxY), maxOf(minY, maxY))
+        )
+    }
+
+    fun applyZoom(
+        newZoom: Float,
+        pivot: Offset = Offset(
+            if (viewportSize.width > 0) viewportSize.width / 2f else 500f,
+            if (viewportSize.height > 0) viewportSize.height / 2f else 750f
+        )
+    ) {
+        val clampedZoom = newZoom.coerceIn(0.7f, 3.0f)
+        if (userZoom == clampedZoom) return
+        val oldZoom = userZoom
+        userZoom = clampedZoom
+
+        val curPan = animPanOffset.value
+        val targetPan = pivot - (pivot - curPan) * (clampedZoom / oldZoom)
+        val clampedPan = clampPan(targetPan, clampedZoom)
+
+        scrollJob?.cancel()
+        scrollJob = coroutineScope.launch {
+            animPanOffset.animateTo(
+                clampedPan,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            )
+        }
     }
 
     fun applyZoomChange(
@@ -146,76 +218,57 @@ fun SpreadsheetScreen(
         pivotX: Float = (viewportSize.width / 2f).coerceAtLeast(0f),
         pivotY: Float = (viewportSize.height / 2f).coerceAtLeast(0f)
     ) {
-        val clampedZoom = newZoom.coerceIn(0.7f, 3.0f)
-        if (oldZoom == clampedZoom) return
-        val zoomRatio = clampedZoom / oldZoom
-        userZoom = clampedZoom
-        
-        val headerW = if (settings.showRowNumbers) 44f * density * oldZoom else 0f
-        val headerH = 32f * density * oldZoom
-        
-        val curX = animScrollX.value
-        val curY = animScrollY.value
-        val targetX = ((curX + pivotX - headerW) * zoomRatio - (pivotX - headerW * zoomRatio)).coerceAtLeast(0f)
-        val targetY = ((curY + pivotY - headerH) * zoomRatio - (pivotY - headerH * zoomRatio)).coerceAtLeast(0f)
-        
-        scrollJob?.cancel()
-        coroutineScope.launch {
-            animScrollX.snapTo(targetX)
-            animScrollY.snapTo(targetY)
-        }
+        applyZoom(newZoom, Offset(pivotX, pivotY))
     }
 
-    // Smooth navigation with clear landing feedback
+    // Smooth navigation with clear landing feedback mapped to current scale & offset
     fun moveSelection(deltaRow: Int, deltaCol: Int) {
         val current = selectedCell ?: Pair(0, 0)
         val newR = (current.first + deltaRow).coerceIn(0, engine.maxRow - 1)
         val newC = (current.second + deltaCol).coerceIn(0, engine.maxCol - 1)
         selectedCell = Pair(newR, newC)
         
-        val headerW = if (settings.showRowNumbers) 44f * density * userZoom else 0f
-        val headerH = 32f * density * userZoom
-        val cellLeft = engine.getColOffsetPx(newC)
-        val cellRight = cellLeft + engine.getColWidthPx(newC)
-        val cellTop = engine.getRowOffsetPx(newR)
-        val cellBottom = cellTop + engine.getRowHeightPx(newR)
+        val headerW = if (settings.showRowNumbers) 44f * density else 0f
+        val headerH = 32f * density
+        val cellLeftUnscaled = headerW + engine.getColOffsetPx(newC)
+        val cellRightUnscaled = cellLeftUnscaled + engine.getColWidthPx(newC)
+        val cellTopUnscaled = headerH + engine.getRowOffsetPx(newR)
+        val cellBottomUnscaled = cellTopUnscaled + engine.getRowHeightPx(newR)
 
-        val canvasW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 1000f
-        val canvasH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f
-        val visibleW = (canvasW - headerW).coerceAtLeast(100f)
-        val visibleH = (canvasH - headerH).coerceAtLeast(100f)
+        val viewW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 1000f
+        val viewH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f
         
-        // 36dp margin so cell lands comfortably in view without edge clipping
-        val margin = 36f * density * userZoom
-        var targetX = animScrollX.value
-        var targetY = animScrollY.value
+        val curPan = animPanOffset.value
+        val cellScreenLeft = cellLeftUnscaled * userZoom + curPan.x
+        val cellScreenRight = cellRightUnscaled * userZoom + curPan.x
+        val cellScreenTop = cellTopUnscaled * userZoom + curPan.y
+        val cellScreenBottom = cellBottomUnscaled * userZoom + curPan.y
+
+        // 40dp margin so cell lands comfortably in view without edge clipping
+        val margin = 40f * density
+        var targetPanX = curPan.x
+        var targetPanY = curPan.y
         
-        if (cellLeft < targetX + margin) {
-            targetX = (cellLeft - margin).coerceAtLeast(0f)
-        } else if (cellRight > targetX + visibleW - margin) {
-            targetX = (cellRight - visibleW + margin).coerceAtLeast(0f)
+        if (cellScreenLeft < margin) {
+            targetPanX = margin - cellLeftUnscaled * userZoom
+        } else if (cellScreenRight > viewW - margin) {
+            targetPanX = viewW - margin - cellRightUnscaled * userZoom
         }
         
-        if (cellTop < targetY + margin) {
-            targetY = (cellTop - margin).coerceAtLeast(0f)
-        } else if (cellBottom > targetY + visibleH - margin) {
-            targetY = (cellBottom - visibleH + margin).coerceAtLeast(0f)
+        if (cellScreenTop < margin) {
+            targetPanY = margin - cellTopUnscaled * userZoom
+        } else if (cellScreenBottom > viewH - margin) {
+            targetPanY = viewH - margin - cellBottomUnscaled * userZoom
         }
+        
+        val clampedPan = clampPan(Offset(targetPanX, targetPanY), userZoom)
         
         scrollJob?.cancel()
         scrollJob = coroutineScope.launch {
-            launch {
-                animScrollX.animateTo(
-                    targetX,
-                    animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
-                )
-            }
-            launch {
-                animScrollY.animateTo(
-                    targetY,
-                    animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
-                )
-            }
+            animPanOffset.animateTo(
+                clampedPan,
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+            )
         }
         
         viewModel.speakCell(newR, newC)
@@ -250,7 +303,7 @@ fun SpreadsheetScreen(
                             color = GreenPrimary.copy(alpha = 0.15f),
                             modifier = Modifier
                                 .padding(end = 4.dp)
-                                .clickable { applyZoomChange(userZoom, 1.0f) }
+                                .clickable { applyZoom(1.0f) }
                                 .testTag("top_bar_zoom_reset")
                         ) {
                             Row(
@@ -303,7 +356,7 @@ fun SpreadsheetScreen(
                                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
                                 },
                                 onClick = {
-                                    applyZoomChange(userZoom, 1.0f)
+                                    applyZoom(1.0f)
                                     showOptionsMenu = false
                                 },
                                 modifier = Modifier.testTag("menu_zoom_reset")
@@ -317,7 +370,7 @@ fun SpreadsheetScreen(
                                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                                 },
                                 onClick = {
-                                    applyZoomChange(userZoom, (userZoom + 0.20f).coerceIn(0.7f, 3.0f))
+                                    applyZoom((userZoom + 0.20f).coerceIn(0.7f, 3.0f))
                                     showOptionsMenu = false
                                 },
                                 modifier = Modifier.testTag("menu_zoom_in")
@@ -331,7 +384,7 @@ fun SpreadsheetScreen(
                                     Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(20.dp))
                                 },
                                 onClick = {
-                                    applyZoomChange(userZoom, (userZoom - 0.20f).coerceIn(0.7f, 3.0f))
+                                    applyZoom((userZoom - 0.20f).coerceIn(0.7f, 3.0f))
                                     showOptionsMenu = false
                                 },
                                 modifier = Modifier.testTag("menu_zoom_out")
@@ -352,7 +405,7 @@ fun SpreadsheetScreen(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clickable {
-                                                applyZoomChange(userZoom, preset)
+                                                applyZoom(preset)
                                                 showOptionsMenu = false
                                             }
                                     ) {
@@ -625,7 +678,7 @@ fun SpreadsheetScreen(
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(showRowNumbers, density, userZoom) {
+                    .pointerInput(showRowNumbers, density) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             val downTime = System.currentTimeMillis()
@@ -648,17 +701,15 @@ fun SpreadsheetScreen(
                                     val panDelta = event.calculatePan()
                                     val centroid = event.calculateCentroid()
 
-                                    if (zoomFactor != 1.0f) {
-                                        applyZoomChange(userZoom, userZoom * zoomFactor, centroid.x, centroid.y)
-                                    }
-                                    if (panDelta != Offset.Zero) {
-                                        coroutineScope.launch {
-                                            val newX = (animScrollX.value - panDelta.x).coerceAtLeast(0f)
-                                            val newY = (animScrollY.value - panDelta.y).coerceAtLeast(0f)
-                                            animScrollX.snapTo(newX)
-                                            animScrollY.snapTo(newY)
-                                        }
-                                    }
+                                    val oldZoom = userZoom
+                                    val newZoom = (oldZoom * zoomFactor).coerceIn(0.7f, 3.0f)
+                                    userZoom = newZoom
+
+                                    val curPan = animPanOffset.value
+                                    val targetPan = centroid - (centroid - curPan) * (newZoom / oldZoom) + panDelta
+                                    val clampedPan = clampPan(targetPan, newZoom)
+
+                                    panChannel.trySend(clampedPan)
                                     event.changes.forEach { it.consume() }
                                 } else if (pressedPointers.size == 1) {
                                     val change = pressedPointers[0]
@@ -668,22 +719,22 @@ fun SpreadsheetScreen(
                                         hasMoved = true
                                         scrollJob?.cancel()
                                         val drag = change.position - lastPos
-                                        coroutineScope.launch {
-                                            val newX = (animScrollX.value - drag.x).coerceAtLeast(0f)
-                                            val newY = (animScrollY.value - drag.y).coerceAtLeast(0f)
-                                            animScrollX.snapTo(newX)
-                                            animScrollY.snapTo(newY)
-                                        }
+                                        val targetPan = animPanOffset.value + drag
+                                        val clampedPan = clampPan(targetPan, userZoom)
+                                        panChannel.trySend(clampedPan)
                                         change.consume()
                                     } else if (!hasMoved && !isMultiTouch && !longPressTriggered) {
                                         val elapsed = System.currentTimeMillis() - downTime
                                         if (elapsed >= viewConfiguration.longPressTimeoutMillis) {
                                             longPressTriggered = true
-                                            val headerW = if (showRowNumbers) 44f * density * userZoom else 0f
-                                            val headerH = 32f * density * userZoom
-                                            if (startPos.x >= headerW && startPos.y > headerH) {
-                                                val gridX = startPos.x - headerW + animScrollX.value
-                                                val gridY = startPos.y - headerH + animScrollY.value
+                                            val curPan = animPanOffset.value
+                                            val unscaledX = (startPos.x - curPan.x) / userZoom
+                                            val unscaledY = (startPos.y - curPan.y) / userZoom
+                                            val headerW = if (showRowNumbers) 44f * density else 0f
+                                            val headerH = 32f * density
+                                            if (unscaledX >= headerW && unscaledY > headerH) {
+                                                val gridX = unscaledX - headerW
+                                                val gridY = unscaledY - headerH
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                                 val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
                                                 selectedCell = Pair(r, c)
@@ -701,11 +752,15 @@ fun SpreadsheetScreen(
                                         val isDoubleTap = (now - lastTapTimestamp < 320) &&
                                                 ((startPos - lastTapPosition).getDistance() < 24 * density)
 
-                                        val headerW = if (showRowNumbers) 44f * density * userZoom else 0f
-                                        val headerH = 32f * density * userZoom
-                                        if (startPos.x >= headerW && startPos.y > headerH) {
-                                            val gridX = startPos.x - headerW + animScrollX.value
-                                            val gridY = startPos.y - headerH + animScrollY.value
+                                        val curPan = animPanOffset.value
+                                        val unscaledX = (startPos.x - curPan.x) / userZoom
+                                        val unscaledY = (startPos.y - curPan.y) / userZoom
+                                        val headerW = if (showRowNumbers) 44f * density else 0f
+                                        val headerH = 32f * density
+
+                                        if (unscaledX >= headerW && unscaledY > headerH) {
+                                            val gridX = unscaledX - headerW
+                                            val gridY = unscaledY - headerH
                                             val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                             val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
 
@@ -720,6 +775,19 @@ fun SpreadsheetScreen(
                                                 viewModel.speakCell(r, c)
                                                 triggerHaptic()
                                             }
+                                        } else if (unscaledY <= headerH && unscaledX >= headerW) {
+                                            // Tapped column header
+                                            val c = engine.getColAt(unscaledX - headerW).coerceIn(0, engine.maxCol - 1)
+                                            selectedCell = Pair(0, c)
+                                            viewModel.speakCell(0, c)
+                                            triggerHaptic()
+                                        } else if (unscaledX < headerW && unscaledY > headerH) {
+                                            // Tapped row header
+                                            val r = engine.getRowAt(unscaledY - headerH).coerceIn(0, engine.maxRow - 1)
+                                            val currentC = selectedCell?.second ?: 0
+                                            selectedCell = Pair(r, currentC)
+                                            viewModel.speakCell(r, currentC)
+                                            triggerHaptic()
                                         }
                                     }
                                     break
@@ -728,50 +796,50 @@ fun SpreadsheetScreen(
                         }
                     }
             ) {
-                // Ensure layout cache is populated with density, zoom, and largeTouch
-                engine.updateLayoutIfNeeded(density, userZoom, settings.largeTouchMode)
                 val t = refreshTrigger // observe trigger
+                val panOffset = animPanOffset.value
+                val headerW = if (showRowNumbers) 44f * density else 0f
+                val headerH = 32f * density
+                val pad = 5f * density
 
-                val headerW = if (showRowNumbers) 44f * density * userZoom else 0f
-                val headerH = 32f * density * userZoom
-                val pad = 5f * density * userZoom
+                withTransform({
+                    translate(left = panOffset.x, top = panOffset.y)
+                    scale(scaleX = userZoom, scaleY = userZoom, pivot = Offset.Zero)
+                }) {
+                    val visibleLeftUnscaled = -panOffset.x / userZoom
+                    val visibleTopUnscaled = -panOffset.y / userZoom
+                    val visibleRightUnscaled = (size.width - panOffset.x) / userZoom
+                    val visibleBottomUnscaled = (size.height - panOffset.y) / userZoom
 
-                val curScrollX = animScrollX.value
-                val curScrollY = animScrollY.value
+                    val startRow = engine.getRowAt(visibleTopUnscaled - headerH).coerceIn(0, engine.maxRow - 1)
+                    val startCol = engine.getColAt(visibleLeftUnscaled - headerW).coerceIn(0, engine.maxCol - 1)
 
-                val startRow = engine.getRowAt(curScrollY).coerceIn(0, engine.maxRow - 1)
-                val startCol = engine.getColAt(curScrollX).coerceIn(0, engine.maxCol - 1)
-
-                val effectiveFontSize = (13 * userZoom).sp
-                val effectiveHeaderFontSize = (11 * userZoom).sp
-
-                // --- 1. Draw Grid Lines & Cell Backgrounds & Content ---
-                clipRect(headerW, headerH, size.width, size.height) {
+                    // --- 1. Draw Grid Lines & Cell Backgrounds & Content ---
                     var r = startRow
                     while (r < engine.maxRow) {
-                        val rowTop = headerH + engine.getRowOffsetPx(r) - curScrollY
+                        val rowTop = headerH + engine.getRowOffsetPx(r)
                         val rowHeight = engine.getRowHeightPx(r)
                         val rowBottom = rowTop + rowHeight
 
-                        if (rowBottom < headerH) {
+                        if (rowBottom < visibleTopUnscaled) {
                             r++
                             continue
                         }
-                        if (rowTop > size.height) {
+                        if (rowTop > visibleBottomUnscaled) {
                             break
                         }
 
                         var c = startCol
                         while (c < engine.maxCol) {
-                            val colLeft = headerW + engine.getColOffsetPx(c) - curScrollX
+                            val colLeft = headerW + engine.getColOffsetPx(c)
                             val colWidth = engine.getColWidthPx(c)
                             val colRight = colLeft + colWidth
 
-                            if (colRight < headerW) {
+                            if (colRight < visibleLeftUnscaled) {
                                 c++
                                 continue
                             }
-                            if (colLeft > size.width) {
+                            if (colLeft > visibleRightUnscaled) {
                                 break
                             }
 
@@ -804,11 +872,7 @@ fun SpreadsheetScreen(
                                     bottom = rowBottom - pad
                                 ) {
                                     val isHeaderRow = r == 0
-                                    val effectiveStyle = if (isHeaderRow) {
-                                        textStyle.copy(fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = effectiveFontSize)
-                                    } else {
-                                        textStyle.copy(fontSize = effectiveFontSize)
-                                    }
+                                    val effectiveStyle = if (isHeaderRow) headerRowStyle else textStyle
                                     val textLayout = textMeasurer.measure(
                                         text = text,
                                         style = effectiveStyle,
@@ -851,26 +915,25 @@ fun SpreadsheetScreen(
                         }
                         r++
                     }
-                }
 
-                // --- 2. Top Column Headers ---
-                clipRect(headerW, 0f, size.width, headerH) {
+                    // --- 2. Top Column Headers ---
+                    val totalGridW = engine.totalWidthPx
                     drawRect(
                         color = headerBg,
                         topLeft = Offset(headerW, 0f),
-                        size = Size(size.width - headerW, headerH)
+                        size = Size(totalGridW, headerH)
                     )
                     var hc = startCol
                     while (hc < engine.maxCol) {
-                        val colLeft = headerW + engine.getColOffsetPx(hc) - curScrollX
+                        val colLeft = headerW + engine.getColOffsetPx(hc)
                         val colWidth = engine.getColWidthPx(hc)
                         val colRight = colLeft + colWidth
 
-                        if (colRight < headerW) {
+                        if (colRight < visibleLeftUnscaled) {
                             hc++
                             continue
                         }
-                        if (colLeft > size.width) {
+                        if (colLeft > visibleRightUnscaled) {
                             break
                         }
 
@@ -883,7 +946,7 @@ fun SpreadsheetScreen(
                         }
 
                         val isColSelected = selectedCell?.second == hc
-                        val headerColor = if (isColSelected) GreenPrimary else headerStyle.color
+                        val effectiveHeaderStyle = if (isColSelected) headerStyleSelected else headerStyleNormal
 
                         drawRect(
                             color = gridColor,
@@ -894,7 +957,7 @@ fun SpreadsheetScreen(
 
                         val textLayout = textMeasurer.measure(
                             text = displayLabel,
-                            style = headerStyle.copy(color = headerColor, fontSize = effectiveHeaderFontSize),
+                            style = effectiveHeaderStyle,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -908,27 +971,26 @@ fun SpreadsheetScreen(
 
                         hc++
                     }
-                }
 
-                // --- 3. Left Row Headers (if enabled) ---
-                if (showRowNumbers && headerW > 0f) {
-                    clipRect(0f, headerH, headerW, size.height) {
+                    // --- 3. Left Row Headers (if enabled) ---
+                    if (showRowNumbers && headerW > 0f) {
+                        val totalGridH = engine.totalHeightPx
                         drawRect(
                             color = headerBg,
                             topLeft = Offset(0f, headerH),
-                            size = Size(headerW, size.height - headerH)
+                            size = Size(headerW, totalGridH)
                         )
                         var hr = startRow
                         while (hr < engine.maxRow) {
-                            val rowTop = headerH + engine.getRowOffsetPx(hr) - curScrollY
+                            val rowTop = headerH + engine.getRowOffsetPx(hr)
                             val rowHeight = engine.getRowHeightPx(hr)
                             val rowBottom = rowTop + rowHeight
 
-                            if (rowBottom < headerH) {
+                            if (rowBottom < visibleTopUnscaled) {
                                 hr++
                                 continue
                             }
-                            if (rowTop > size.height) {
+                            if (rowTop > visibleBottomUnscaled) {
                                 break
                             }
 
@@ -945,7 +1007,7 @@ fun SpreadsheetScreen(
 
                             val textLayout = textMeasurer.measure(
                                 text = rowName,
-                                style = headerStyle.copy(color = headerColor, fontSize = effectiveHeaderFontSize)
+                                style = headerStyle.copy(color = headerColor)
                             )
                             drawText(
                                 textLayoutResult = textLayout,
@@ -957,20 +1019,20 @@ fun SpreadsheetScreen(
 
                             hr++
                         }
-                    }
 
-                    // Top-Left Corner Box
-                    drawRect(
-                        color = headerBg,
-                        topLeft = Offset(0f, 0f),
-                        size = Size(headerW, headerH)
-                    )
-                    drawRect(
-                        color = gridColor,
-                        topLeft = Offset(0f, 0f),
-                        size = Size(headerW, headerH),
-                        style = Stroke(width = 1f * density)
-                    )
+                        // Top-Left Corner Box
+                        drawRect(
+                            color = headerBg,
+                            topLeft = Offset(0f, 0f),
+                            size = Size(headerW, headerH)
+                        )
+                        drawRect(
+                            color = gridColor,
+                            topLeft = Offset(0f, 0f),
+                            size = Size(headerW, headerH),
+                            style = Stroke(width = 1f * density)
+                        )
+                    }
                 }
             }
         }

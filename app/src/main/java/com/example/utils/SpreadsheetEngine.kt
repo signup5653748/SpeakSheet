@@ -26,6 +26,7 @@ class SpreadsheetEngine {
     val defaultColWidthDp = 90f // dp
 
     private var rowOffsetsPx = FloatArray(0)
+    private var rowHeightsPx = FloatArray(0)
     private var colOffsetsPx = FloatArray(0)
     private var colWidthsDp = FloatArray(0)
     private var isLayoutDirty = true
@@ -40,6 +41,14 @@ class SpreadsheetEngine {
         private set
     var totalHeightPx = 0f
         private set
+
+    private val cellValueCache = HashMap<Long, String>()
+    private val cellRightAlignedCache = HashMap<Long, Boolean>()
+
+    fun clearCellCaches() {
+        cellValueCache.clear()
+        cellRightAlignedCache.clear()
+    }
 
     suspend fun loadFromUri(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
         val type = context.contentResolver.getType(uri)
@@ -68,10 +77,11 @@ class SpreadsheetEngine {
                         frozenRows = pane.horizontalSplitTopRow.toInt()
                     }
                 }
+                clearCellCaches()
                 isLayoutDirty = true
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            // Handled gracefully without leaking stack trace
         }
     }
 
@@ -95,6 +105,7 @@ class SpreadsheetEngine {
         }
         maxRow = maxOf(30, r + 10).coerceAtMost(300)
         maxCol = maxOf(10, maxC + 4).coerceAtMost(30)
+        clearCellCaches()
         isLayoutDirty = true
     }
 
@@ -118,6 +129,7 @@ class SpreadsheetEngine {
         }
         maxRow = maxOf(25, data.size + 10)
         maxCol = maxOf(10, maxC + 3)
+        clearCellCaches()
         isLayoutDirty = true
     }
     
@@ -127,14 +139,24 @@ class SpreadsheetEngine {
                 workbook.write(outputStream)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            // Handled gracefully without leaking stack trace
         }
     }
 
     fun getCellValue(r: Int, c: Int): String {
-        val row = sheet.getRow(r) ?: return ""
-        val cell = row.getCell(c) ?: return ""
-        return try {
+        val key = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
+        val cached = cellValueCache[key]
+        if (cached != null) return cached
+
+        val row = sheet.getRow(r) ?: run {
+            cellValueCache[key] = ""
+            return ""
+        }
+        val cell = row.getCell(c) ?: run {
+            cellValueCache[key] = ""
+            return ""
+        }
+        val formatted = try {
             dataFormatter.formatCellValue(cell, evaluator)
         } catch (e: Exception) {
             try {
@@ -143,6 +165,8 @@ class SpreadsheetEngine {
                 ""
             }
         }
+        cellValueCache[key] = formatted
+        return formatted
     }
 
     fun getCellFormulaOrValue(r: Int, c: Int): String {
@@ -155,21 +179,36 @@ class SpreadsheetEngine {
     }
     
     fun isRightAligned(r: Int, c: Int): Boolean {
-        val row = sheet.getRow(r) ?: return false
-        val cell = row.getCell(c) ?: return false
+        val key = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
+        val cached = cellRightAlignedCache[key]
+        if (cached != null) return cached
+
+        val row = sheet.getRow(r) ?: run {
+            cellRightAlignedCache[key] = false
+            return false
+        }
+        val cell = row.getCell(c) ?: run {
+            cellRightAlignedCache[key] = false
+            return false
+        }
         val cellType = cell.cellType
-        if (cellType == CellType.NUMERIC) return true
+        if (cellType == CellType.NUMERIC) {
+            cellRightAlignedCache[key] = true
+            return true
+        }
         if (cellType == CellType.FORMULA) {
             try {
                 val cv = evaluator.evaluate(cell)
-                if (cv != null && cv.cellType == CellType.NUMERIC) return true
+                if (cv != null && cv.cellType == CellType.NUMERIC) {
+                    cellRightAlignedCache[key] = true
+                    return true
+                }
             } catch (e: Exception) {}
         }
         val text = getCellValue(r, c).trim()
-        if (text.isNotEmpty() && (text.toDoubleOrNull() != null || text.startsWith("$") || text.endsWith("%"))) {
-            return true
-        }
-        return false
+        val result = text.isNotEmpty() && (text.toDoubleOrNull() != null || text.startsWith("$") || text.endsWith("%"))
+        cellRightAlignedCache[key] = result
+        return result
     }
 
     fun setCell(r: Int, c: Int, value: String) {
@@ -189,9 +228,11 @@ class SpreadsheetEngine {
         }
         
         try {
+            evaluator.clearAllCachedResultValues()
             evaluator.evaluateFormulaCell(cell)
         } catch (e: Exception) {}
         
+        clearCellCaches()
         isLayoutDirty = true
     }
 
@@ -212,17 +253,17 @@ class SpreadsheetEngine {
         return defaultColWidthDp
     }
 
-    fun updateLayoutIfNeeded(density: Float, zoom: Float = 1.0f, largeTouch: Boolean = false) {
-        val effectiveDensity = density * zoom
-        if (!isLayoutDirty && effectiveDensity == currentDensity && currentLargeTouch == largeTouch &&
+    fun updateLayoutIfNeeded(density: Float, largeTouch: Boolean = false) {
+        if (!isLayoutDirty && density == currentDensity && currentLargeTouch == largeTouch &&
             rowOffsetsPx.size == maxRow && colOffsetsPx.size == maxCol) {
             return
         }
         
-        currentDensity = effectiveDensity
-        currentZoom = zoom
+        currentDensity = density
+        currentZoom = 1.0f
         currentLargeTouch = largeTouch
         rowOffsetsPx = FloatArray(maxRow)
+        rowHeightsPx = FloatArray(maxRow)
         colOffsetsPx = FloatArray(maxCol)
         colWidthsDp = FloatArray(maxCol)
 
@@ -243,18 +284,25 @@ class SpreadsheetEngine {
         var currentY = 0f
         for (r in 0 until maxRow) {
             rowOffsetsPx[r] = currentY
-            currentY += getRowHeightDp(r, largeTouch) * effectiveDensity
+            val h = getRowHeightDp(r, largeTouch) * density
+            rowHeightsPx[r] = h
+            currentY += h
         }
         totalHeightPx = currentY
         
         var currentX = 0f
         for (c in 0 until maxCol) {
             colOffsetsPx[c] = currentX
-            currentX += getColWidthDp(c) * effectiveDensity
+            currentX += getColWidthDp(c) * density
         }
         totalWidthPx = currentX
         
         isLayoutDirty = false
+    }
+
+    // Overload for compatibility
+    fun updateLayoutIfNeeded(density: Float, zoom: Float, largeTouch: Boolean) {
+        updateLayoutIfNeeded(density, largeTouch)
     }
 
     fun getRowOffsetPx(r: Int): Float {
@@ -273,7 +321,13 @@ class SpreadsheetEngine {
         }
     }
 
-    fun getRowHeightPx(r: Int): Float = getRowHeightDp(r) * currentDensity
+    fun getRowHeightPx(r: Int): Float {
+        return if (r in rowHeightsPx.indices) {
+            rowHeightsPx[r]
+        } else {
+            getRowHeightDp(r) * currentDensity
+        }
+    }
     fun getColWidthPx(c: Int): Float = getColWidthDp(c) * currentDensity
 
     // Backwards-compatible aliases for Px

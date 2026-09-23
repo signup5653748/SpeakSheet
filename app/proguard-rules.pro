@@ -67,3 +67,29 @@
 -keeppackagenames org.apache.poi.ss.formula.function
 -keep class schemaorg_apache_xmlbeans.** { *; }
 -keep class org.apache.xmlbeans.impl.schema.BuiltinSchemaTypeSystem { public static *** get*(); }
+
+# OpenCSV rules
+-dontwarn com.opencsv.**
+-keep class com.opencsv.** { *; }
+
+# AndroidX Room
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Dao interface * { *; }
+-keep @androidx.room.Entity class * { *; }
+-dontwarn androidx.room.paging.**
+
+# Service providers for StAX XML processing
+-keep class com.fasterxml.aalto.stax.InputFactoryImpl { *; }
+-keep class com.fasterxml.aalto.stax.OutputFactoryImpl { *; }
+-keep class com.fasterxml.aalto.stax.EventFactoryImpl { *; }
+-keep class * implements javax.xml.stream.XMLInputFactory { *; }
+-keep class * implements javax.xml.stream.XMLOutputFactory { *; }
+-keep class * implements javax.xml.stream.XMLEventFactory { *; }
+
+# Strip non-error log statements in release builds
+-assumenosideeffects class android.util.Log {
+    public static boolean isLoggable(java.lang.String, int);
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

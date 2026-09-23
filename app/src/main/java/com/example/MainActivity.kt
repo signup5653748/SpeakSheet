@@ -22,41 +22,31 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Fix for Apache POI on Android (StAX XML parser configuration)
-        System.setProperty("org.apache.poi.javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl")
-        System.setProperty("org.apache.poi.javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
-        System.setProperty("org.apache.poi.javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
-        
         enableEdgeToEdge()
         setContent {
             SpeakSheetTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = BackgroundDark
-                ) {
-                    val navController = rememberNavController()
-                    val viewModel: MainViewModel = viewModel()
-                    
-                    NavHost(navController = navController, startDestination = "home") {
-                        composable("home") {
-                            HomeScreen(
-                                viewModel = viewModel,
-                                onNavigateToSpreadsheet = { navController.navigate("spreadsheet") },
-                                onNavigateToSettings = { navController.navigate("settings") }
-                            )
-                        }
-                        composable("spreadsheet") {
-                            SpreadsheetScreen(
-                                viewModel = viewModel,
-                                onNavigateBack = { navController.popBackStack() }
-                            )
-                        }
-                        composable("settings") {
-                            SettingsScreen(
-                                viewModel = viewModel,
-                                onNavigateBack = { navController.popBackStack() }
-                            )
-                        }
+                val navController = rememberNavController()
+                val viewModel: MainViewModel = viewModel()
+                
+                NavHost(navController = navController, startDestination = "home") {
+                    composable("home") {
+                        HomeScreen(
+                            viewModel = viewModel,
+                            onNavigateToSpreadsheet = { navController.navigate("spreadsheet") },
+                            onNavigateToSettings = { navController.navigate("settings") }
+                        )
+                    }
+                    composable("spreadsheet") {
+                        SpreadsheetScreen(
+                            viewModel = viewModel,
+                            onNavigateBack = { navController.popBackStack() }
+                        )
+                    }
+                    composable("settings") {
+                        SettingsScreen(
+                            viewModel = viewModel,
+                            onNavigateBack = { navController.popBackStack() }
+                        )
                     }
                 }
             }

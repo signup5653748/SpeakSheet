@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.RecentFile
 import com.example.data.SampleSheet
 import com.example.data.SampleSheets
@@ -45,8 +46,13 @@ fun HomeScreen(
     onNavigateToSpreadsheet: () -> Unit,
     onNavigateToSettings: () -> Unit
 ) {
-    val recentFiles by viewModel.recentFiles.collectAsState()
+    val recentFiles by viewModel.recentFiles.collectAsStateWithLifecycle()
     var searchQuery by remember { mutableStateOf("") }
+    val filteredFiles = remember(recentFiles, searchQuery) {
+        recentFiles.filter { 
+            it.name.contains(searchQuery, ignoreCase = true) 
+        }
+    }
     
     val context = LocalContext.current
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -154,7 +160,7 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .padding(bottom = 20.dp)
                 ) {
-                    items(SampleSheets.ALL_SAMPLES) { sample ->
+                    items(SampleSheets.ALL_SAMPLES, key = { it.id }) { sample ->
                         SampleFileCard(
                             sample = sample,
                             onOpen = {
@@ -199,10 +205,6 @@ fun HomeScreen(
                 }
             }
             
-            val filteredFiles = recentFiles.filter { 
-                it.name.contains(searchQuery, ignoreCase = true) 
-            }
-            
             if (filteredFiles.isEmpty()) {
                 item {
                     Card(
@@ -224,7 +226,7 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Tap any sample card above to start testing instantly!",
+                                text = "Tap any sample card above to explore instantly!",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
@@ -232,7 +234,7 @@ fun HomeScreen(
                     }
                 }
             } else {
-                items(filteredFiles) { file ->
+                items(filteredFiles, key = { it.uri }) { file ->
                     RecentFileCard(
                         file = file,
                         onClick = {
@@ -246,11 +248,13 @@ fun HomeScreen(
     }
 }
 
+private val recentFileDateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
+
 @Composable
 fun SampleFileCard(sample: SampleSheet, onOpen: () -> Unit) {
     val (icon, badgeColor) = when (sample.category) {
         "Finance" -> Icons.Default.AttachMoney to Color(0xFF2E7D32)
-        "Business" -> Icons.Default.TrendingUp to Color(0xFF1565C0)
+        "Business" -> Icons.Filled.TrendingUp to Color(0xFF1565C0)
         else -> Icons.Default.School to Color(0xFF6A1B9A)
     }
 
@@ -341,8 +345,9 @@ fun SampleFileCard(sample: SampleSheet, onOpen: () -> Unit) {
 
 @Composable
 fun RecentFileCard(file: RecentFile, onClick: () -> Unit) {
-    val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
-    val dateStr = dateFormat.format(Date(file.lastModified))
+    val dateStr = remember(file.lastModified) {
+        recentFileDateFormat.format(Date(file.lastModified))
+    }
     val isSample = file.uri.startsWith("sample://")
     
     Card(

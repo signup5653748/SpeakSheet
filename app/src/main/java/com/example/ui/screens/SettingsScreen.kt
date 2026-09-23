@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.AppSettings
 import com.example.data.InteractionMode
 import com.example.ui.theme.GreenPrimary
@@ -21,10 +22,12 @@ fun SettingsScreen(
     viewModel: MainViewModel,
     onNavigateBack: () -> Unit
 ) {
-    val settings by viewModel.appSettings.collectAsState()
-    val voices by viewModel.ttsManager.availableVoices.collectAsState()
+    val settings by viewModel.appSettings.collectAsStateWithLifecycle()
+    val voices by viewModel.ttsManager.availableVoices.collectAsStateWithLifecycle()
     
     var showVoiceDialog by remember { mutableStateOf(false) }
+    var localSpeechRate by remember(settings.speechRate) { mutableFloatStateOf(settings.speechRate) }
+    var localPitch by remember(settings.pitch) { mutableFloatStateOf(settings.pitch) }
 
     Scaffold(
         topBar = {
@@ -59,10 +62,13 @@ fun SettingsScreen(
             
             item {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text("Speech Rate: ${String.format("%.1f", settings.speechRate)}x")
+                    Text("Speech Rate: ${String.format("%.1f", localSpeechRate)}x")
                     Slider(
-                        value = settings.speechRate,
-                        onValueChange = { viewModel.updateSettings(settings.copy(speechRate = it)) },
+                        value = localSpeechRate,
+                        onValueChange = { localSpeechRate = it },
+                        onValueChangeFinished = {
+                            viewModel.updateSettings(settings.copy(speechRate = localSpeechRate))
+                        },
                         valueRange = 0.5f..2.0f,
                         colors = SliderDefaults.colors(thumbColor = GreenPrimary, activeTrackColor = GreenPrimary)
                     )
@@ -71,10 +77,13 @@ fun SettingsScreen(
             
             item {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text("Pitch: ${String.format("%.1f", settings.pitch)}")
+                    Text("Pitch: ${String.format("%.1f", localPitch)}")
                     Slider(
-                        value = settings.pitch,
-                        onValueChange = { viewModel.updateSettings(settings.copy(pitch = it)) },
+                        value = localPitch,
+                        onValueChange = { localPitch = it },
+                        onValueChangeFinished = {
+                            viewModel.updateSettings(settings.copy(pitch = localPitch))
+                        },
                         valueRange = 0.5f..2.0f,
                         colors = SliderDefaults.colors(thumbColor = GreenPrimary, activeTrackColor = GreenPrimary)
                     )
@@ -124,7 +133,7 @@ fun SettingsScreen(
             title = { Text("Select Voice") },
             text = {
                 LazyColumn {
-                    items(voices.size) { index ->
+                    items(voices.size, key = { voices[it].name }) { index ->
                         val voice = voices[index]
                         val name = "${voice.locale.displayLanguage} - ${voice.name}"
                         Text(

@@ -12,12 +12,14 @@ import com.example.data.SampleSheets
 import com.example.data.SettingsRepository
 import com.example.utils.SpreadsheetEngine
 import com.example.utils.TtsManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -45,16 +47,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val gridRefreshTrigger: StateFlow<Int> = _gridRefreshTrigger.asStateFlow()
 
     init {
-        // Pre-populate sample sheets into Recent Files on first launch
+        // Pre-populate sample sheets into Recent Files on first launch if empty
         viewModelScope.launch {
             try {
-                if (recentFileDao.getRecentFilesList().isEmpty()) {
+                if (recentFileDao.getRecentFilesCount() == 0) {
                     SampleSheets.ALL_SAMPLES.forEachIndexed { index, sample ->
-                        recentFileDao.insertRecentFile(
+                        recentFileDao.upsertRecentFile(
                             RecentFile(
+                                uri = "sample://${sample.id}",
                                 name = "${sample.title}.xlsx",
                                 path = "sample://${sample.id}",
-                                uri = "sample://${sample.id}",
                                 lastModified = System.currentTimeMillis() - (index * 60_000L),
                                 sizeBytes = 15_360L
                             )
@@ -62,7 +64,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Ignore initialization error gracefully
             }
         }
     }
@@ -91,18 +93,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSampleSpreadsheet(sampleId: String) {
         val sample = SampleSheets.getSample(sampleId) ?: return
-        _currentFileUri.value = Uri.parse("sample://${sample.id}")
+        val sampleUri = "sample://${sample.id}"
+        _currentFileUri.value = Uri.parse(sampleUri)
         _currentFileName.value = "${sample.title}.xlsx"
-        spreadsheetEngine.loadSampleData(sample.title, sample.rows)
-        _gridRefreshTrigger.value += 1
-        ttsManager.speak("Loaded ${sample.title}")
         
         viewModelScope.launch {
-            recentFileDao.insertRecentFile(
+            withContext(Dispatchers.Default) {
+                spreadsheetEngine.loadSampleData(sample.title, sample.rows)
+            }
+            _gridRefreshTrigger.value += 1
+            ttsManager.speak("Loaded ${sample.title}")
+
+            recentFileDao.upsertRecentFile(
                 RecentFile(
+                    uri = sampleUri,
                     name = "${sample.title}.xlsx",
-                    path = "sample://${sample.id}",
-                    uri = "sample://${sample.id}",
+                    path = sampleUri,
                     lastModified = System.currentTimeMillis(),
                     sizeBytes = 15_360L
                 )
@@ -123,12 +129,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             spreadsheetEngine.loadFromUri(getApplication(), uri)
             _gridRefreshTrigger.value += 1
             
-            // Add to recent files
-            recentFileDao.insertRecentFile(
+            // Add or update recent file
+            recentFileDao.upsertRecentFile(
                 RecentFile(
+                    uri = uri.toString(),
                     name = name,
                     path = uri.path ?: "",
-                    uri = uri.toString(),
                     lastModified = System.currentTimeMillis(),
                     sizeBytes = 0L // Optional: resolve actual size
                 )
@@ -137,11 +143,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateCell(row: Int, col: Int, value: String) {
-        spreadsheetEngine.setCell(row, col, value)
-        _gridRefreshTrigger.value += 1
-        
-        if (appSettings.value.speakAfterEditing) {
-            ttsManager.speak("Cell updated")
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                spreadsheetEngine.setCell(row, col, value)
+            }
+            _gridRefreshTrigger.value += 1
+            
+            if (appSettings.value.speakAfterEditing) {
+                ttsManager.speak("Cell updated")
+            }
         }
     }
 

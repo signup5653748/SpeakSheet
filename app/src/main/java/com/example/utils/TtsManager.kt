@@ -4,13 +4,19 @@ import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class TtsManager(context: Context) : TextToSpeech.OnInitListener {
 
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var tts: TextToSpeech? = null
     
     private val _isInitialized = MutableStateFlow(false)
@@ -35,7 +41,9 @@ class TtsManager(context: Context) : TextToSpeech.OnInitListener {
                     tts?.language = Locale.getDefault()
                 }
                 _isInitialized.value = true
-                loadAvailableVoices()
+                managerScope.launch {
+                    loadAvailableVoices()
+                }
             } catch (e: Exception) {
                 Log.e("TtsManager", "Error setting language", e)
                 _isInitialized.value = true
@@ -95,6 +103,7 @@ class TtsManager(context: Context) : TextToSpeech.OnInitListener {
 
     fun shutdown() {
         try {
+            managerScope.cancel()
             tts?.stop()
             tts?.shutdown()
         } catch (e: Exception) {
