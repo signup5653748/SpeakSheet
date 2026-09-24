@@ -214,13 +214,14 @@ jobs:
       run: |
         export "${{ needs.detect.outputs.store_password_var }}"="${{ secrets.KEYSTORE_PASSWORD }}"
         export "${{ needs.detect.outputs.key_password_var }}"="${{ secrets.KEY_PASSWORD }}"
+        export STORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}"
+        export KEY_PASSWORD="${{ secrets.KEY_PASSWORD }}"
         # Always export as KEY_ALIAS - the "Enforce Canonical Signing Config"
         # step guarantees the build file reads exactly this name, regardless
         # of what detection saw in the file BEFORE that step ran.
         export KEY_ALIAS="$DETECTED_KEY_ALIAS"
-        if [ "${{ needs.detect.outputs.uses_keystore_path_env }}" = "true" ]; then
-          export KEYSTORE_PATH="$(pwd)/${{ needs.detect.outputs.keystore_filename }}"
-        fi
+        export KEYSTORE_PATH="$(pwd)/${{ needs.detect.outputs.keystore_filename }}"
+        cp "${{ needs.detect.outputs.keystore_filename }}" my-upload-key.jks 2>/dev/null || true
         # --no-daemon forces a fresh JVM for this build, avoiding daemon
         # reuse across the earlier "gradle wrapper" invocation - reused
         # daemons are a known cause of KSP crashing with
