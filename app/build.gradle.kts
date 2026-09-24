@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-  namespace = "com.SpeakSheet"
+  namespace = "com.speaksheet"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.SpeakSheet"
+    applicationId = "com.speaksheet"
     minSdk = 26
     targetSdk = 36
     versionCode = 1

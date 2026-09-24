@@ -1,4 +1,4 @@
-package com.SpeakSheet.utils
+package com.speaksheet.utils
 
 import android.content.Context
 import android.speech.tts.TextToSpeech
@@ -28,7 +28,7 @@ class TtsManager(context: Context) : TextToSpeech.OnInitListener {
     init {
         try {
             tts = TextToSpeech(context.applicationContext, this)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("TtsManager", "Failed to construct TextToSpeech", e)
         }
     }

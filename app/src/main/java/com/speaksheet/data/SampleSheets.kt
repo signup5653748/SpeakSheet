@@ -1,4 +1,4 @@
-package com.SpeakSheet.data
+package com.speaksheet.data
 
 data class SampleSheet(
     val id: String,

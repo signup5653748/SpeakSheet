@@ -1,4 +1,4 @@
-package com.SpeakSheet.ui.theme
+package com.speaksheet.ui.theme
 
 import android.app.Activity
 import androidx.compose.material3.MaterialTheme

@@ -1,4 +1,4 @@
-package com.SpeakSheet.utils
+package com.speaksheet.utils
 
 import android.content.Context
 import android.net.Uri
@@ -11,10 +11,33 @@ import java.io.InputStreamReader
 
 class SpreadsheetEngine {
 
-    var workbook: Workbook = XSSFWorkbook()
-    var sheet: Sheet = workbook.createSheet("Sheet1")
-    var evaluator: FormulaEvaluator = workbook.creationHelper.createFormulaEvaluator()
+    var workbook: Workbook
+    var sheet: Sheet
+    var evaluator: FormulaEvaluator? = null
     var dataFormatter = DataFormatter()
+
+    init {
+        var wb: Workbook
+        var sh: Sheet
+        var ev: FormulaEvaluator? = null
+        try {
+            wb = XSSFWorkbook()
+            sh = wb.createSheet("Sheet1")
+            ev = try { wb.creationHelper.createFormulaEvaluator() } catch (_: Throwable) { null }
+        } catch (_: Throwable) {
+            try {
+                wb = org.apache.poi.hssf.usermodel.HSSFWorkbook()
+                sh = wb.createSheet("Sheet1")
+                ev = try { wb.creationHelper.createFormulaEvaluator() } catch (_: Throwable) { null }
+            } catch (_: Throwable) {
+                wb = XSSFWorkbook()
+                sh = wb.createSheet("Sheet1")
+            }
+        }
+        workbook = wb
+        sheet = sh
+        evaluator = ev
+    }
 
     var frozenRows = 0
     var frozenCols = 0
@@ -61,7 +84,7 @@ class SpreadsheetEngine {
                 } else {
                     workbook = WorkbookFactory.create(inputStream)
                     sheet = workbook.getSheetAt(0) ?: workbook.createSheet("Sheet1")
-                    evaluator = workbook.creationHelper.createFormulaEvaluator()
+                    evaluator = try { workbook.creationHelper.createFormulaEvaluator() } catch (_: Throwable) { null }
                     
                     val detectedRows = sheet.lastRowNum + 1
                     var mCol = 0
@@ -88,7 +111,7 @@ class SpreadsheetEngine {
     private fun loadCSV(inputStream: java.io.InputStream) {
         workbook = XSSFWorkbook()
         sheet = workbook.createSheet("Sheet1")
-        evaluator = workbook.creationHelper.createFormulaEvaluator()
+        evaluator = try { workbook.creationHelper.createFormulaEvaluator() } catch (_: Throwable) { null }
         val reader = CSVReader(InputStreamReader(inputStream))
         var r = 0
         var maxC = 0
@@ -112,7 +135,7 @@ class SpreadsheetEngine {
     fun loadSampleData(title: String, data: List<List<String>>) {
         workbook = XSSFWorkbook()
         sheet = workbook.createSheet(title.take(31))
-        evaluator = workbook.creationHelper.createFormulaEvaluator()
+        evaluator = try { workbook.creationHelper.createFormulaEvaluator() } catch (_: Throwable) { null }
         var maxC = 0
         data.forEachIndexed { r, rowValues ->
             val row = sheet.createRow(r)
@@ -198,7 +221,7 @@ class SpreadsheetEngine {
         }
         if (cellType == CellType.FORMULA) {
             try {
-                val cv = evaluator.evaluate(cell)
+                val cv = evaluator?.evaluate(cell)
                 if (cv != null && cv.cellType == CellType.NUMERIC) {
                     cellRightAlignedCache[key] = true
                     return true
@@ -228,8 +251,8 @@ class SpreadsheetEngine {
         }
         
         try {
-            evaluator.clearAllCachedResultValues()
-            evaluator.evaluateFormulaCell(cell)
+            evaluator?.clearAllCachedResultValues()
+            evaluator?.evaluateFormulaCell(cell)
         } catch (e: Exception) {}
         
         clearCellCaches()

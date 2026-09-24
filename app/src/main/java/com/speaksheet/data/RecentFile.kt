@@ -1,4 +1,4 @@
-package com.SpeakSheet.data
+package com.speaksheet.data
 
 import androidx.room.Entity
 import androidx.room.Index

@@ -1,4 +1,4 @@
-package com.SpeakSheet
+package com.speaksheet
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -11,12 +11,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.SpeakSheet.ui.screens.HomeScreen
-import com.SpeakSheet.ui.screens.SettingsScreen
-import com.SpeakSheet.ui.screens.SpreadsheetScreen
-import com.SpeakSheet.ui.theme.BackgroundDark
-import com.SpeakSheet.ui.theme.SpeakSheetTheme
-import com.SpeakSheet.viewmodel.MainViewModel
+import com.speaksheet.ui.screens.HomeScreen
+import com.speaksheet.ui.screens.SettingsScreen
+import com.speaksheet.ui.screens.SpreadsheetScreen
+import com.speaksheet.ui.theme.BackgroundDark
+import com.speaksheet.ui.theme.SpeakSheetTheme
+import com.speaksheet.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

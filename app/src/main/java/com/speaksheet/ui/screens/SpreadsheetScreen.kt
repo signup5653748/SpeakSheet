@@ -1,4 +1,4 @@
-package com.SpeakSheet.ui.screens
+package com.speaksheet.ui.screens
 
 import android.content.Context
 import android.os.Build
@@ -58,8 +58,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.SpeakSheet.ui.theme.GreenPrimary
-import com.SpeakSheet.viewmodel.MainViewModel
+import com.speaksheet.ui.theme.GreenPrimary
+import com.speaksheet.viewmodel.MainViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch

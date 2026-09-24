@@ -1,17 +1,17 @@
-package com.SpeakSheet.viewmodel
+package com.speaksheet.viewmodel
 
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.SpeakSheet.data.AppDatabase
-import com.SpeakSheet.data.AppSettings
-import com.SpeakSheet.data.InteractionMode
-import com.SpeakSheet.data.RecentFile
-import com.SpeakSheet.data.SampleSheets
-import com.SpeakSheet.data.SettingsRepository
-import com.SpeakSheet.utils.SpreadsheetEngine
-import com.SpeakSheet.utils.TtsManager
+import com.speaksheet.data.AppDatabase
+import com.speaksheet.data.AppSettings
+import com.speaksheet.data.InteractionMode
+import com.speaksheet.data.RecentFile
+import com.speaksheet.data.SampleSheets
+import com.speaksheet.data.SettingsRepository
+import com.speaksheet.utils.SpreadsheetEngine
+import com.speaksheet.utils.TtsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -63,7 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 // Ignore initialization error gracefully
             }
         }

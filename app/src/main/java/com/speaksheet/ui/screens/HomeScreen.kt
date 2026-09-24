@@ -1,4 +1,4 @@
-package com.SpeakSheet.ui.screens
+package com.speaksheet.ui.screens
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,11 +30,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.SpeakSheet.data.RecentFile
-import com.SpeakSheet.data.SampleSheet
-import com.SpeakSheet.data.SampleSheets
-import com.SpeakSheet.ui.theme.GreenPrimary
-import com.SpeakSheet.viewmodel.MainViewModel
+import com.speaksheet.data.RecentFile
+import com.speaksheet.data.SampleSheet
+import com.speaksheet.data.SampleSheets
+import com.speaksheet.ui.theme.GreenPrimary
+import com.speaksheet.viewmodel.MainViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

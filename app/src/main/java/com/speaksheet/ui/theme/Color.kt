@@ -1,4 +1,4 @@
-package com.SpeakSheet.ui.theme
+package com.speaksheet.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

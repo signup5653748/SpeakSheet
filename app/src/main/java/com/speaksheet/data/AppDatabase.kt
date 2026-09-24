@@ -1,4 +1,4 @@
-package com.SpeakSheet.data
+package com.speaksheet.data
 
 import android.content.Context
 import androidx.room.Database

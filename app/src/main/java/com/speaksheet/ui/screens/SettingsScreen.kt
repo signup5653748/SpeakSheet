@@ -1,4 +1,4 @@
-package com.SpeakSheet.ui.screens
+package com.speaksheet.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,10 +11,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.SpeakSheet.data.AppSettings
-import com.SpeakSheet.data.InteractionMode
-import com.SpeakSheet.ui.theme.GreenPrimary
-import com.SpeakSheet.viewmodel.MainViewModel
+import com.speaksheet.data.AppSettings
+import com.speaksheet.data.InteractionMode
+import com.speaksheet.ui.theme.GreenPrimary
+import com.speaksheet.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
