@@ -14,6 +14,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachMoney
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
@@ -108,17 +110,23 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
+            ExtendedFloatingActionButton(
                 onClick = {
                     viewModel.openNewSpreadsheet()
                     onNavigateToSpreadsheet()
                 },
+                icon = {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                },
+                text = {
+                    Text("New Sheet", fontWeight = FontWeight.SemiBold)
+                },
                 containerColor = GreenPrimary,
                 contentColor = Color.White,
-                modifier = Modifier.padding(16.dp).testTag("fab_new_spreadsheet")
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Create New Spreadsheet")
-            }
+                modifier = Modifier
+                    .padding(16.dp)
+                    .testTag("fab_new_spreadsheet")
+            )
         }
     ) { padding ->
         LazyColumn(
@@ -187,7 +195,7 @@ fun HomeScreen(
                 }
             }
             
-            // Recent Files Header & Import button
+            // Recent Files Header & Action buttons
             item {
                 Row(
                     modifier = Modifier
@@ -203,26 +211,42 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     
-                    FilledTonalButton(
-                        onClick = { 
-                            filePickerLauncher.launch(arrayOf(
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-                                "application/vnd.ms-excel",
-                                "application/vnd.ms-excel.sheet.macroEnabled.12",
-                                "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
-                                "application/vnd.oasis.opendocument.spreadsheet",
-                                "text/csv", 
-                                "text/comma-separated-values",
-                                "text/tab-separated-values",
-                                "text/tsv",
-                                "text/plain",
-                                "*/*"
-                            )) 
-                        },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.testTag("import_file_button")
-                    ) {
-                        Text("Import Sheet", fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = { 
+                                filePickerLauncher.launch(arrayOf(
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                                    "application/vnd.ms-excel",
+                                    "application/vnd.ms-excel.sheet.macroEnabled.12",
+                                    "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+                                    "application/vnd.oasis.opendocument.spreadsheet",
+                                    "text/csv", 
+                                    "text/comma-separated-values",
+                                    "text/tab-separated-values",
+                                    "text/tsv"
+                                )) 
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("import_file_button")
+                        ) {
+                            Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Import", fontSize = 13.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                viewModel.openNewSpreadsheet()
+                                onNavigateToSpreadsheet()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("new_sheet_header_button")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("New Sheet", fontSize = 13.sp)
+                        }
                     }
                 }
             }
@@ -248,10 +272,23 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Tap any sample card above to explore instantly!",
+                                text = "Create a blank sheet or tap a template to get started!",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = {
+                                    viewModel.openNewSpreadsheet()
+                                    onNavigateToSpreadsheet()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                                modifier = Modifier.testTag("empty_state_create_new_button")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Create Blank Spreadsheet")
+                            }
                         }
                     }
                 }
@@ -262,6 +299,9 @@ fun HomeScreen(
                         onClick = {
                             viewModel.openFile(Uri.parse(file.uri), file.name)
                             onNavigateToSpreadsheet()
+                        },
+                        onDelete = {
+                            viewModel.deleteRecentFile(file)
                         }
                     )
                 }
@@ -366,7 +406,11 @@ fun SampleFileCard(sample: SampleSheet, onOpen: () -> Unit) {
 }
 
 @Composable
-fun RecentFileCard(file: RecentFile, onClick: () -> Unit) {
+fun RecentFileCard(
+    file: RecentFile, 
+    onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
     val dateStr = remember(file.lastModified) {
         recentFileDateFormat.format(Date(file.lastModified))
     }
@@ -438,12 +482,28 @@ fun RecentFileCard(file: RecentFile, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
             }
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = "Open file",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                modifier = Modifier.size(18.dp)
-            )
+            if (!isSample && onDelete != null) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .testTag("delete_recent_${file.name.replace(" ", "_")}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Remove file",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            } else {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = "Open file",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
 }

@@ -34,6 +34,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -172,6 +175,11 @@ fun SpreadsheetScreen(
     var editingCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showMenuForCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showOptionsMenu by remember { mutableStateOf(false) }
+    var showZoomControlsMenu by remember { mutableStateOf(false) }
+    
+    val currentFileUri by viewModel.currentFileUri.collectAsStateWithLifecycle()
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf("") }
 
     // Pan offset state with smooth animation support
     val animPanOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
@@ -188,6 +196,13 @@ fun SpreadsheetScreen(
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     var lastTapTimestamp by remember { mutableLongStateOf(0L) }
     var lastTapPosition by remember { mutableStateOf(Offset.Zero) }
+
+    LaunchedEffect(currentFileUri, fileName) {
+        selectedCell = Pair(0, 0)
+        editingCell = null
+        userZoom = 1.0f
+        animPanOffset.snapTo(Offset.Zero)
+    }
     
     val vibrator = remember {
         try {
@@ -383,8 +398,24 @@ fun SpreadsheetScreen(
         topBar = {
             TopAppBar(
                 title = { 
-                    Column {
-                        Text(fileName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(
+                        modifier = Modifier
+                            .clickable {
+                                renameText = fileName
+                                showRenameDialog = true
+                            }
+                            .testTag("spreadsheet_title_header")
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(fileName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Rename spreadsheet",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         if (userZoom != 1.0f) {
                             Text(
                                 text = "Zoom: ${(userZoom * 100).roundToInt()}%",
@@ -400,6 +431,18 @@ fun SpreadsheetScreen(
                     }
                 },
                 actions = {
+                    // Save document button
+                    IconButton(
+                        onClick = { viewModel.saveDocument() },
+                        modifier = Modifier.testTag("top_bar_save_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Save,
+                            contentDescription = "Save Spreadsheet",
+                            tint = GreenPrimary
+                        )
+                    }
+
                     // Quick Reset Zoom chip if zoomed
                     if (userZoom != 1.0f) {
                         Surface(
@@ -444,7 +487,53 @@ fun SpreadsheetScreen(
                             onDismissRequest = { showOptionsMenu = false },
                             modifier = Modifier.widthIn(min = 280.dp)
                         ) {
-                            // Zoom options under three-dot menu
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Spacer(Modifier.width(12.dp))
+                                        Text("Save Document", fontWeight = FontWeight.SemiBold)
+                                    }
+                                },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    viewModel.saveDocument()
+                                },
+                                modifier = Modifier.testTag("menu_save_document")
+                            )
+
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(20.dp))
+                                        Spacer(Modifier.width(12.dp))
+                                        Text("Rename Document")
+                                    }
+                                },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    renameText = fileName
+                                    showRenameDialog = true
+                                },
+                                modifier = Modifier.testTag("menu_rename_document")
+                            )
+
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Spacer(Modifier.width(12.dp))
+                                        Text("New Blank Spreadsheet")
+                                    }
+                                },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    viewModel.openNewSpreadsheet()
+                                },
+                                modifier = Modifier.testTag("menu_new_spreadsheet")
+                            )
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                             DropdownMenuItem(
                                 text = {
                                     Row(
@@ -452,78 +541,35 @@ fun SpreadsheetScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Reset Zoom (100%)", fontWeight = FontWeight.SemiBold)
-                                        Text("${(userZoom * 100).roundToInt()}%", color = GreenPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("Zoom Controls", fontWeight = FontWeight.SemiBold)
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = GreenPrimary.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = "${(userZoom * 100).roundToInt()}%",
+                                                color = GreenPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
                                     }
                                 },
                                 leadingIcon = {
-                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                    Icon(
+                                        Icons.Default.ZoomIn,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = GreenPrimary
+                                    )
                                 },
                                 onClick = {
-                                    applyZoom(1.0f)
                                     showOptionsMenu = false
+                                    showZoomControlsMenu = true
                                 },
-                                modifier = Modifier.testTag("menu_zoom_reset")
+                                modifier = Modifier.testTag("menu_zoom_controls")
                             )
-
-                            DropdownMenuItem(
-                                text = {
-                                    Text("Zoom In (+20%)", fontWeight = FontWeight.Medium)
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
-                                },
-                                onClick = {
-                                    applyZoom((userZoom + 0.20f).coerceIn(0.7f, 3.0f))
-                                    showOptionsMenu = false
-                                },
-                                modifier = Modifier.testTag("menu_zoom_in")
-                            )
-
-                            DropdownMenuItem(
-                                text = {
-                                    Text("Zoom Out (-20%)", fontWeight = FontWeight.Medium)
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(20.dp))
-                                },
-                                onClick = {
-                                    applyZoom((userZoom - 0.20f).coerceIn(0.7f, 3.0f))
-                                    showOptionsMenu = false
-                                },
-                                modifier = Modifier.testTag("menu_zoom_out")
-                            )
-
-                            // Preset zoom levels
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                listOf(0.8f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { preset ->
-                                    val isCurrent = (userZoom * 100).roundToInt() == (preset * 100).roundToInt()
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (isCurrent) GreenPrimary else MaterialTheme.colorScheme.surfaceVariant,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clickable {
-                                                applyZoom(preset)
-                                                showOptionsMenu = false
-                                            }
-                                    ) {
-                                        Text(
-                                            text = "${(preset * 100).roundToInt()}%",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isCurrent) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(vertical = 6.dp),
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                        )
-                                    }
-                                }
-                            }
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -1331,6 +1377,180 @@ fun SpreadsheetScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showMenuForCell = null }) { Text("Close") }
+            }
+        )
+    }
+
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename Spreadsheet") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("Spreadsheet Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("rename_document_input")
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (renameText.isNotBlank()) {
+                            viewModel.renameDocument(renameText)
+                        }
+                        showRenameDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("confirm_rename_button")
+                ) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showZoomControlsMenu) {
+        AlertDialog(
+            onDismissRequest = { showZoomControlsMenu = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.ZoomIn,
+                    contentDescription = null,
+                    tint = GreenPrimary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Zoom Controls",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Large Current Zoom Display
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = GreenPrimary.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = "${(userZoom * 100).roundToInt()}%",
+                            color = GreenPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 26.sp,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    // Stepper Row: [-] [Slider] [+]
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalIconButton(
+                            onClick = {
+                                applyZoom((userZoom - 0.15f).coerceIn(0.7f, 3.0f))
+                            },
+                            modifier = Modifier.testTag("dialog_zoom_out_button")
+                        ) {
+                            Icon(Icons.Default.Remove, contentDescription = "Zoom Out")
+                        }
+
+                        Slider(
+                            value = userZoom,
+                            onValueChange = { applyZoom(it) },
+                            valueRange = 0.7f..3.0f,
+                            steps = 22,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 8.dp)
+                                .testTag("zoom_slider"),
+                            colors = SliderDefaults.colors(
+                                thumbColor = GreenPrimary,
+                                activeTrackColor = GreenPrimary
+                            )
+                        )
+
+                        FilledTonalIconButton(
+                            onClick = {
+                                applyZoom((userZoom + 0.15f).coerceIn(0.7f, 3.0f))
+                            },
+                            modifier = Modifier.testTag("dialog_zoom_in_button")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Zoom In")
+                        }
+                    }
+
+                    // Preset Chips Row
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Preset Levels",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { preset ->
+                                val isCurrent = (userZoom * 100).roundToInt() == (preset * 100).roundToInt()
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isCurrent) GreenPrimary else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { applyZoom(preset) }
+                                        .testTag("zoom_preset_${(preset * 100).roundToInt()}")
+                                ) {
+                                    Text(
+                                        text = "${(preset * 100).roundToInt()}%",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isCurrent) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 8.dp),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Quick Reset to 100% button
+                    OutlinedButton(
+                        onClick = { applyZoom(1.0f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("dialog_zoom_reset_button")
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Reset to 100%")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showZoomControlsMenu = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("dialog_zoom_done_button")
+                ) {
+                    Text("Done")
+                }
             }
         )
     }

@@ -64,10 +64,9 @@
                 <data android:mimeType="text/x-comma-separated-values" />
                 <data android:mimeType="application/csv" />
                 <data android:mimeType="application/x-csv" />
-                <!-- TSV & Plain Text MIME types -->
+                <!-- TSV MIME types -->
                 <data android:mimeType="text/tab-separated-values" />
                 <data android:mimeType="text/tsv" />
-                <data android:mimeType="text/plain" />
             </intent-filter>
 
             <!-- File extension patterns for file managers sending generic */* MIME type -->
@@ -162,7 +161,6 @@
                 <data android:mimeType="text/comma-separated-values" />
                 <data android:mimeType="text/tab-separated-values" />
                 <data android:mimeType="text/tsv" />
-                <data android:mimeType="text/plain" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>

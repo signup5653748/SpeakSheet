@@ -98,4 +98,24 @@ class SpreadsheetEngineTest {
         assertEquals("$1.50", engine.getCellValue(1, 1))
         assertEquals("10", engine.getCellValue(1, 2))
     }
+
+    @Test
+    fun testNewSpreadsheetClearsAllCells() {
+        val engine = SpreadsheetEngine()
+        engine.setCell(0, 0, "Header1")
+        engine.setCell(0, 1, "Header2")
+        engine.setCell(1, 0, "100")
+        engine.setCell(1, 1, "=A2")
+        assertEquals("100", engine.getCellValue(1, 1))
+
+        // Create new spreadsheet
+        engine.newSpreadsheet(50, 15)
+
+        assertEquals("", engine.getCellValue(0, 0))
+        assertEquals("", engine.getCellValue(0, 1))
+        assertEquals("", engine.getCellValue(1, 0))
+        assertEquals("", engine.getCellValue(1, 1))
+        assertEquals(50, engine.maxRow)
+        assertEquals(15, engine.maxCol)
+    }
 }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
+import java.io.File
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
@@ -142,6 +143,23 @@ class SpreadsheetEngine {
         )
         cellRightAlignedCache[key] = isNumeric
         return isNumeric
+    }
+
+    fun newSpreadsheet(rows: Int = 100, cols: Int = 26) {
+        cells.clear()
+        cellRightAlignedCache.clear()
+        formulaCellKeys.clear()
+        evaluatingCells.clear()
+        dirtyColumns.clear()
+        maxRow = rows.coerceAtLeast(10)
+        maxCol = cols.coerceAtLeast(5)
+        frozenRows = 0
+        frozenCols = 0
+        rowOffsetsPx = FloatArray(0)
+        rowHeightsPx = FloatArray(0)
+        colOffsetsPx = FloatArray(0)
+        colWidthsDp = FloatArray(0)
+        isFullLayoutDirty = true
     }
 
     fun loadSampleData(title: String, data: List<List<String>>) {
@@ -408,6 +426,17 @@ class SpreadsheetEngine {
         return Pair(row - 1, col - 1)
     }
 
+    suspend fun saveToFile(file: File) = withContext(Dispatchers.IO) {
+        file.parentFile?.mkdirs()
+        file.outputStream().use { out ->
+            if (file.name.endsWith(".csv", ignoreCase = true)) {
+                saveCSV(out)
+            } else {
+                saveXLSX(out)
+            }
+        }
+    }
+
     suspend fun saveToUri(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
         try {
             context.contentResolver.openOutputStream(uri)?.use { out ->
@@ -423,7 +452,7 @@ class SpreadsheetEngine {
         }
     }
 
-    private fun saveCSV(out: OutputStream) {
+    fun saveCSV(out: OutputStream) {
         val writer = OutputStreamWriter(out)
         for (r in 0 until maxRow) {
             val line = (0 until maxCol).joinToString(",") { c ->
@@ -439,7 +468,7 @@ class SpreadsheetEngine {
         writer.flush()
     }
 
-    private fun saveXLSX(out: OutputStream) {
+    fun saveXLSX(out: OutputStream) {
         val zip = ZipOutputStream(out)
         
         // Write simple workbook structure
