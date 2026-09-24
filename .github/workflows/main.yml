@@ -68,6 +68,7 @@ jobs:
         if [ -z "$COMPILE_SDK" ]; then
           COMPILE_SDK=$(grep -rhoE 'compileSdk(Version)?[= ]+["'"'"']?[0-9]+' --include="build.gradle*" "$GRADLE_DIR" 2>/dev/null | grep -oE '[0-9]+' | sort -n | tail -1)
         fi
+        [ -z "$COMPILE_SDK" ] && COMPILE_SDK="36"
         echo "compileSdk: ${COMPILE_SDK:-not found}"
 
         GRADLE_VERSION=""
@@ -106,7 +107,7 @@ jobs:
           echo "app_module=$APP_MODULE"
           echo "gradle_task=$GRADLE_TASK"
           echo "compile_sdk=$COMPILE_SDK"
-          echo "jdk_version=17"
+          echo "jdk_version=21"
           echo "gradle_version=$GRADLE_VERSION"
           echo "wrapper_valid=$WRAPPER_VALID"
           echo "keystore_filename=$KEYSTORE_FILENAME"
@@ -273,7 +274,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.RELEASE_TAG }}
-        name: "My App ${{ env.RELEASE_TAG }}"
+        name: "SpeakSheet ${{ env.RELEASE_TAG }}"
         body: |
           ### 🚀 What's Changed:
           ${{ github.event.head_commit.message || 'Manual triggering / Maintenance updates' }}
@@ -296,7 +297,7 @@ jobs:
       if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/devel' || github.event_name == 'workflow_dispatch' }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        APP_NAME: "My App"
+        APP_NAME: "SpeakSheet"
       run: echo "aW1wb3J0IG9zLCBqc29uLCB1cmxsaWIucmVxdWVzdCwgZGF0ZXRpbWUKCnJlcG8gPSBvcy5lbnZpcm9uLmdldCgiR0lUSFVCX1JFUE9TSVRPUlkiLCAiIikKdG9rZW4gPSBvcy5lbnZpcm9uLmdldCgiR0lUSFVCX1RPS0VOIiwgIiIpCmFwcF9uYW1lID0gb3MuZW52aXJvbi5nZXQoIkFQUF9OQU1FIiwgIkFwcCIpCgpyZXEgPSB1cmxsaWIucmVxdWVzdC5SZXF1ZXN0KAogICAgImh0dHBzOi8vYXBpLmdpdGh1Yi5jb20vcmVwb3MvIiArIHJlcG8gKyAiL3JlbGVhc2VzP3Blcl9wYWdlPTEwMCIsCiAgICBoZWFkZXJzPXsiQXV0aG9yaXphdGlvbiI6ICJCZWFyZXIgIiArIHRva2VuLCAiQWNjZXB0IjogImFwcGxpY2F0aW9uL3ZuZC5naXRodWIranNvbiJ9CikKdHJ5OgogICAgd2l0aCB1cmxsaWIucmVxdWVzdC51cmxvcGVuKHJlcSkgYXMgcmVzcDoKICAgICAgICByZWxlYXNlcyA9IGpzb24ubG9hZChyZXNwKQpleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiAgICBwcmludCgiOjp3YXJuaW5nOjpDb3VsZCBub3QgZmV0Y2ggcmVsZWFzZXM6ICIgKyBzdHIoZSkpCiAgICByZWxlYXNlcyA9IFtdCgojIEV4Y2x1ZGUgdGhlIHJvbGxpbmcgImxhdGVzdCIgcmVsZWFzZSBpdHNlbGYgZnJvbSB0aGUgaGlzdG9yeSB0YWJsZQpyZWxlYXNlcyA9IFtyIGZvciByIGluIHJlbGVhc2VzIGlmIHIuZ2V0KCJ0YWdfbmFtZSIpICE9ICJsYXRlc3QiXQoKZGVmIHByaW1hcnlfYXNzZXQoYXNzZXRzKToKICAgIGZvciBhIGluIGFzc2V0czoKICAgICAgICBpZiBhLmdldCgibmFtZSIsICIiKS5sb3dlcigpLmVuZHN3aXRoKCIuYXBrIik6CiAgICAgICAgICAgIHJldHVybiBhCiAgICByZXR1cm4gYXNzZXRzWzBdIGlmIGFzc2V0cyBlbHNlIE5vbmUKCmRlZiBmbXRfZGF0ZShpc28pOgogICAgdHJ5OgogICAgICAgIGQgPSBkYXRldGltZS5kYXRldGltZS5zdHJwdGltZShpc28sICIlWS0lbS0lZFQlSDolTTolU1oiKQogICAgICAgIHJldHVybiBkLnN0cmZ0aW1lKCIlYiAlZCwgJVkiKQogICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICByZXR1cm4gaXNvIG9yICIiCgpkZWYgZmlyc3RfbGluZShib2R5KToKICAgIGlmIG5vdCBib2R5OgogICAgICAgIHJldHVybiAiX05vIG1lc3NhZ2VfIgogICAgZm9yIGxpbmUgaW4gYm9keS5zcGxpdGxpbmVzKCk6CiAgICAgICAgbGluZSA9IGxpbmUuc3RyaXAoKS5sc3RyaXAoIiMiKS5zdHJpcCgpCiAgICAgICAgaWYgbm90IGxpbmU6CiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgbG93ZXIgPSBsaW5lLmxvd2VyKCkKICAgICAgICBpZiBsaW5lLnN0YXJ0c3dpdGgoIioqIik6CiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgaWYgIndoYXQncyBjaGFuZ2VkIiBpbiBsb3dlciBvciAid2hhdHMgY2hhbmdlZCIgaW4gbG93ZXI6CiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgaWYgImJ1aWxkIHRpbWUiIGluIGxvd2VyIG9yICJ0cmlnZ2VyZWQgYnkiIGluIGxvd2VyIG9yICJjb21taXQgc2hhIiBpbiBsb3dlciBvciAiYnVpbGQgZGV0YWlscyIgaW4gbG93ZXI6CiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgcmV0dXJuIGxpbmVbOjkwXQogICAgcmV0dXJuICJfTm8gbWVzc2FnZV8iCgpyb3dzID0gW10KZm9yIHIgaW4gcmVsZWFzZXM6CiAgICBhc3NldCA9IHByaW1hcnlfYXNzZXQoci5nZXQoImFzc2V0cyIsIFtdKSkKICAgIGRsID0gYXNzZXRbImJyb3dzZXJfZG93bmxvYWRfdXJsIl0gaWYgYXNzZXQgZWxzZSBOb25lCiAgICBkbF9jZWxsID0gIltEb3dubG9hZF0oIiArIGRsICsgIikiIGlmIGRsIGVsc2UgIl9ubyBhc3NldF8iCiAgICByb3dzLmFwcGVuZCgifCAiICsgci5nZXQoInRhZ19uYW1lIiwgIiIpICsgIiB8ICIgKyBmbXRfZGF0ZShyLmdldCgicHVibGlzaGVkX2F0IiwgIiIpKSArICIgfCAiICsgZmlyc3RfbGluZShyLmdldCgiYm9keSIsICIiKSkgKyAiIHwgIiArIGRsX2NlbGwgKyAiIHwiKQoKdGFibGUgPSAiXG4iLmpvaW4ocm93cykgaWYgcm93cyBlbHNlICJ8IF9ub25lIHlldF8gfCB8IHwgfCIKCmJvZHkgPSAiIyMjIOKshyBUaGlzIHJlbGVhc2UgYWx3YXlzIHBvaW50cyB0byB0aGUgbmV3ZXN0IGJ1aWxkLlxuXG4jIyMg8J+TnCBGdWxsIEJ1aWxkIEhpc3RvcnlcbnwgVmVyc2lvbiB8IERhdGUgfCBDb21taXQgTWVzc2FnZSB8IERvd25sb2FkIHxcbnwtLS18LS0tfC0tLXwtLS18XG4iICsgdGFibGUKCndpdGggb3BlbigibGF0ZXN0X2JvZHkubWQiLCAidyIpIGFzIGY6CiAgICBmLndyaXRlKGJvZHkpCnByaW50KCJXcm90ZSBoaXN0b3J5IGZvciAiICsgc3RyKGxlbihyZWxlYXNlcykpICsgIiByZWxlYXNlKHMpIHRvIGxhdGVzdF9ib2R5Lm1kIikK" | base64 -d | python3
 
     - name: Update Rolling "latest" Release
@@ -304,7 +305,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: latest
-        name: "My App — Latest Build"
+        name: "SpeakSheet — Latest Build"
         body_path: latest_body.md
         draft: false
         prerelease: false
