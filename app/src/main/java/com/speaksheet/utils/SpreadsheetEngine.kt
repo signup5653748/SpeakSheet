@@ -2,7 +2,10 @@ package com.speaksheet.utils
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
+import com.opencsv.CSVParserBuilder
 import com.opencsv.CSVReader
+import com.opencsv.CSVReaderBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -28,12 +31,15 @@ class SpreadsheetEngine {
 
     private val cells = HashMap<Long, CellData>()
     private val cellRightAlignedCache = HashMap<Long, Boolean>()
+    private val formulaCellKeys = HashSet<Long>()
+    private val evaluatingCells = HashSet<Long>()
 
     private var rowOffsetsPx = FloatArray(0)
     private var rowHeightsPx = FloatArray(0)
     private var colOffsetsPx = FloatArray(0)
     private var colWidthsDp = FloatArray(0)
-    private var isLayoutDirty = true
+    private var isFullLayoutDirty = true
+    private val dirtyColumns = HashSet<Int>()
 
     var currentDensity = 1f
         private set
@@ -49,24 +55,36 @@ class SpreadsheetEngine {
 
     data class CellData(
         var raw: String = "",
-        var evaluated: String = ""
+        var evaluated: String? = null
     )
 
     private fun cellKey(r: Int, c: Int): Long = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
 
     fun clearCellCaches() {
         cellRightAlignedCache.clear()
+        for (fKey in formulaCellKeys) {
+            cells[fKey]?.evaluated = null
+        }
+        dirtyColumns.clear()
     }
 
     fun getCellValue(r: Int, c: Int): String {
         val cell = cells[cellKey(r, c)] ?: return ""
-        return if (cell.raw.startsWith("=")) {
-            if (cell.evaluated.isEmpty()) {
-                cell.evaluated = evaluateFormula(cell.raw)
-            }
-            cell.evaluated
-        } else {
-            cell.raw
+        if (!cell.raw.startsWith("=")) {
+            return cell.raw
+        }
+        cell.evaluated?.let { return it }
+
+        val key = cellKey(r, c)
+        if (!evaluatingCells.add(key)) {
+            return "#CIRCULAR!"
+        }
+        return try {
+            val eval = evaluateFormula(cell.raw)
+            cell.evaluated = eval
+            eval
+        } finally {
+            evaluatingCells.remove(key)
         }
     }
 
@@ -78,13 +96,36 @@ class SpreadsheetEngine {
         val key = cellKey(r, c)
         if (value.isEmpty()) {
             cells.remove(key)
+            formulaCellKeys.remove(key)
         } else {
             val cell = cells.getOrPut(key) { CellData() }
             cell.raw = value
-            cell.evaluated = if (value.startsWith("=")) evaluateFormula(value) else value
+            cell.evaluated = null
+            if (value.startsWith("=")) {
+                formulaCellKeys.add(key)
+            } else {
+                formulaCellKeys.remove(key)
+            }
         }
         cellRightAlignedCache.remove(key)
-        isLayoutDirty = true
+
+        if (r >= maxRow || c >= maxCol) {
+            maxRow = maxOf(maxRow, r + 1)
+            maxCol = maxOf(maxCol, c + 1)
+            isFullLayoutDirty = true
+        } else {
+            dirtyColumns.add(c)
+        }
+
+        // Invalidate all dependent formula cells so any formulas referencing this cell recalculate
+        for (fKey in formulaCellKeys) {
+            cells[fKey]?.evaluated = null
+            cellRightAlignedCache.remove(fKey)
+            val fCol = (fKey and 0xFFFFFFFFL).toInt()
+            if (fCol in 0 until maxCol) {
+                dirtyColumns.add(fCol)
+            }
+        }
     }
 
     fun isRightAligned(r: Int, c: Int): Boolean {
@@ -97,7 +138,7 @@ class SpreadsheetEngine {
             value.toDoubleOrNull() != null ||
             value.startsWith("$") ||
             value.endsWith("%") ||
-            value.matches(Regex("^[+-]?\\d+([.,]\\d+)?$"))
+            value.matches(NUMERIC_REGEX)
         )
         cellRightAlignedCache[key] = isNumeric
         return isNumeric
@@ -119,38 +160,78 @@ class SpreadsheetEngine {
         maxCol = maxOf(10, maxC + 3)
         frozenRows = 0
         frozenCols = 0
-        isLayoutDirty = true
+        isFullLayoutDirty = true
     }
 
     suspend fun loadFromUri(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
         val type = context.contentResolver.getType(uri) ?: ""
-        val name = uri.path ?: ""
-        try {
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                if (name.endsWith(".csv", ignoreCase = true) || type.contains("csv")) {
-                    loadCSV(inputStream)
-                } else if (name.endsWith(".xlsx", ignoreCase = true) || type.contains("spreadsheetml") || type.contains("octet-stream") || type.contains("zip")) {
-                    loadXLSX(inputStream)
-                } else {
-                    // Try XLSX first, fallback to CSV
-                    try {
-                        loadXLSX(inputStream)
-                    } catch (_: Throwable) {
-                        context.contentResolver.openInputStream(uri)?.use { stream2 ->
-                            loadCSV(stream2)
-                        }
+        var fileName = ""
+        if (uri.scheme == "content") {
+            try {
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx != -1 && cursor.moveToFirst()) {
+                        fileName = cursor.getString(idx) ?: ""
                     }
+                }
+            } catch (_: Throwable) {}
+        }
+        if (fileName.isEmpty()) {
+            fileName = uri.lastPathSegment?.substringAfterLast('/') ?: (uri.path ?: "")
+        }
+
+        val isCsvOrText = fileName.endsWith(".csv", ignoreCase = true) ||
+                fileName.endsWith(".tsv", ignoreCase = true) ||
+                fileName.endsWith(".tab", ignoreCase = true) ||
+                fileName.endsWith(".txt", ignoreCase = true) ||
+                type.contains("csv", ignoreCase = true) ||
+                type.contains("comma-separated", ignoreCase = true) ||
+                type.contains("tab-separated", ignoreCase = true)
+
+        try {
+            if (isCsvOrText) {
+                context.contentResolver.openInputStream(uri)?.use { loadCSV(it) }
+            } else {
+                val success = context.contentResolver.openInputStream(uri)?.use { loadXLSX(it) } ?: false
+                if (!success) {
+                    context.contentResolver.openInputStream(uri)?.use { loadCSV(it) }
                 }
             }
         } catch (_: Throwable) {
-            // Graceful handling
+            try {
+                context.contentResolver.openInputStream(uri)?.use { loadCSV(it) }
+            } catch (_: Throwable) {
+                // Graceful handling
+            }
         }
     }
 
-    private fun loadCSV(inputStream: InputStream) {
+    internal fun loadCSV(inputStream: InputStream) {
         cells.clear()
         clearCellCaches()
-        val reader = CSVReader(InputStreamReader(inputStream))
+        val bytes = inputStream.readBytes()
+        if (bytes.isEmpty()) return
+
+        // Auto-detect delimiter from first line (comma, tab, semicolon)
+        val sampleText = String(bytes.take(2048).toByteArray(), Charsets.UTF_8)
+        val firstLine = sampleText.lines().firstOrNull() ?: ""
+        val commaCount = firstLine.count { it == ',' }
+        val tabCount = firstLine.count { it == '\t' }
+        val semicolonCount = firstLine.count { it == ';' }
+
+        val separator = when {
+            tabCount > commaCount && tabCount > semicolonCount -> '\t'
+            semicolonCount > commaCount && semicolonCount > tabCount -> ';'
+            else -> ','
+        }
+
+        val parser = CSVParserBuilder()
+            .withSeparator(separator)
+            .build()
+        val reader = CSVReaderBuilder(InputStreamReader(bytes.inputStream()))
+            .withCSVParser(parser)
+            .build()
+
         var r = 0
         var maxC = 0
         reader.forEach { rowData ->
@@ -164,34 +245,40 @@ class SpreadsheetEngine {
         }
         maxRow = maxOf(30, r + 10).coerceAtMost(300)
         maxCol = maxOf(10, maxC + 4).coerceAtMost(30)
-        isLayoutDirty = true
+        isFullLayoutDirty = true
     }
 
-    private fun loadXLSX(inputStream: InputStream) {
+    private fun loadXLSX(inputStream: InputStream): Boolean {
         cells.clear()
         clearCellCaches()
         val sharedStrings = ArrayList<String>()
         val sheetBytes = HashMap<String, ByteArray>()
 
-        val zip = ZipInputStream(inputStream)
-        var entry: ZipEntry? = zip.nextEntry
-        while (entry != null) {
-            val entryName = entry.name
-            if (entryName == "xl/sharedStrings.xml") {
-                parseSharedStrings(zip, sharedStrings)
-            } else if (entryName.startsWith("xl/worksheets/sheet") && entryName.endsWith(".xml")) {
-                sheetBytes[entryName] = zip.readBytes()
+        try {
+            val zip = ZipInputStream(inputStream)
+            var entry: ZipEntry? = zip.nextEntry
+            while (entry != null) {
+                val entryName = entry.name
+                if (entryName == "xl/sharedStrings.xml") {
+                    parseSharedStrings(zip, sharedStrings)
+                } else if (entryName.startsWith("xl/worksheets/sheet") && entryName.endsWith(".xml")) {
+                    sheetBytes[entryName] = zip.readBytes()
+                }
+                zip.closeEntry()
+                entry = zip.nextEntry
             }
-            zip.closeEntry()
-            entry = zip.nextEntry
-        }
 
-        val firstSheetBytes = sheetBytes["xl/worksheets/sheet1.xml"]
-            ?: sheetBytes.values.firstOrNull()
+            val firstSheetBytes = sheetBytes["xl/worksheets/sheet1.xml"]
+                ?: sheetBytes.values.firstOrNull()
 
-        if (firstSheetBytes != null) {
-            parseSheetXml(firstSheetBytes.inputStream(), sharedStrings)
+            if (firstSheetBytes != null) {
+                parseSheetXml(firstSheetBytes.inputStream(), sharedStrings)
+                return true
+            }
+        } catch (_: Throwable) {
+            return false
         }
+        return false
     }
 
     private fun parseSharedStrings(stream: InputStream, list: ArrayList<String>) {
@@ -304,7 +391,7 @@ class SpreadsheetEngine {
         }
         maxRow = maxOf(30, maxR + 10).coerceAtMost(300)
         maxCol = maxOf(10, maxC + 4).coerceAtMost(30)
-        isLayoutDirty = true
+        isFullLayoutDirty = true
     }
 
     private fun parseCellReference(ref: String): Pair<Int, Int>? {
@@ -519,47 +606,81 @@ class SpreadsheetEngine {
     }
 
     fun updateLayoutIfNeeded(density: Float, largeTouch: Boolean = false) {
-        if (!isLayoutDirty && density == currentDensity && currentLargeTouch == largeTouch &&
-            rowOffsetsPx.size == maxRow && colOffsetsPx.size == maxCol) {
+        val structureOrStyleDirty = isFullLayoutDirty ||
+            density != currentDensity ||
+            currentLargeTouch != largeTouch ||
+            rowOffsetsPx.size != maxRow ||
+            colOffsetsPx.size != maxCol ||
+            colWidthsDp.size != maxCol
+
+        if (structureOrStyleDirty) {
+            currentDensity = density
+            currentZoom = 1.0f
+            currentLargeTouch = largeTouch
+            rowOffsetsPx = FloatArray(maxRow)
+            rowHeightsPx = FloatArray(maxRow)
+            colOffsetsPx = FloatArray(maxCol)
+            colWidthsDp = FloatArray(maxCol)
+
+            val checkLimit = minOf(maxRow, 25)
+            for (c in 0 until maxCol) {
+                var maxLen = 4
+                for (r in 0 until checkLimit) {
+                    val len = getCellValue(r, c).length
+                    if (len > maxLen) maxLen = len
+                }
+                val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
+                colWidthsDp[c] = calculatedW
+            }
+
+            var currentY = 0f
+            for (r in 0 until maxRow) {
+                rowOffsetsPx[r] = currentY
+                val h = getRowHeightDp(r, largeTouch) * density
+                rowHeightsPx[r] = h
+                currentY += h
+            }
+            totalHeightPx = currentY
+
+            var currentX = 0f
+            for (c in 0 until maxCol) {
+                colOffsetsPx[c] = currentX
+                currentX += getColWidthDp(c) * density
+            }
+            totalWidthPx = currentX
+
+            isFullLayoutDirty = false
+            dirtyColumns.clear()
             return
         }
 
-        currentDensity = density
-        currentZoom = 1.0f
-        currentLargeTouch = largeTouch
-        rowOffsetsPx = FloatArray(maxRow)
-        rowHeightsPx = FloatArray(maxRow)
-        colOffsetsPx = FloatArray(maxCol)
-        colWidthsDp = FloatArray(maxCol)
+        if (dirtyColumns.isEmpty()) {
+            return
+        }
 
-        for (c in 0 until maxCol) {
-            var maxLen = 4
-            val checkLimit = minOf(maxRow, 25)
-            for (r in 0 until checkLimit) {
-                val len = getCellValue(r, c).length
-                if (len > maxLen) maxLen = len
+        // Incremental column width update for dirty columns only
+        val minDirty = dirtyColumns.minOrNull() ?: 0
+        val checkLimit = minOf(maxRow, 25)
+        for (c in dirtyColumns) {
+            if (c in colWidthsDp.indices) {
+                var maxLen = 4
+                for (r in 0 until checkLimit) {
+                    val len = getCellValue(r, c).length
+                    if (len > maxLen) maxLen = len
+                }
+                val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
+                colWidthsDp[c] = calculatedW
             }
-            val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
-            colWidthsDp[c] = calculatedW
         }
+        dirtyColumns.clear()
 
-        var currentY = 0f
-        for (r in 0 until maxRow) {
-            rowOffsetsPx[r] = currentY
-            val h = getRowHeightDp(r, largeTouch) * density
-            rowHeightsPx[r] = h
-            currentY += h
-        }
-        totalHeightPx = currentY
-
-        var currentX = 0f
-        for (c in 0 until maxCol) {
+        // Recompute colOffsetsPx starting from minDirty to maxCol
+        var currentX = if (minDirty in colOffsetsPx.indices) colOffsetsPx[minDirty] else 0f
+        for (c in minDirty until maxCol) {
             colOffsetsPx[c] = currentX
             currentX += getColWidthDp(c) * density
         }
         totalWidthPx = currentX
-
-        isLayoutDirty = false
     }
 
     fun updateLayoutIfNeeded(density: Float, zoom: Float, largeTouch: Boolean) {
@@ -633,5 +754,9 @@ class SpreadsheetEngine {
         } else {
             "Column ${getColumnName(col)}"
         }
+    }
+
+    companion object {
+        private val NUMERIC_REGEX = Regex("^[+-]?\\d+([.,]\\d+)?$")
     }
 }

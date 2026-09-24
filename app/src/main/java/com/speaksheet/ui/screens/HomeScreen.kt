@@ -1,6 +1,7 @@
 package com.speaksheet.ui.screens
 
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -59,8 +60,22 @@ fun HomeScreen(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { uri: Uri? ->
             uri?.let {
-                val name = it.lastPathSegment ?: "Imported File"
-                viewModel.openFile(it, name)
+                var name: String? = null
+                if (it.scheme == "content") {
+                    try {
+                        context.contentResolver.query(it, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                            val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            if (idx != -1 && cursor.moveToFirst()) {
+                                name = cursor.getString(idx)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+                if (name.isNullOrBlank()) {
+                    name = it.lastPathSegment?.substringAfterLast('/')
+                }
+                val finalName = name?.takeIf { it.isNotBlank() } ?: "Imported File.xlsx"
+                viewModel.openFile(it, finalName)
                 onNavigateToSpreadsheet()
             }
         }
@@ -192,9 +207,16 @@ fun HomeScreen(
                         onClick = { 
                             filePickerLauncher.launch(arrayOf(
                                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-                                "application/vnd.ms-excel", 
+                                "application/vnd.ms-excel",
+                                "application/vnd.ms-excel.sheet.macroEnabled.12",
+                                "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+                                "application/vnd.oasis.opendocument.spreadsheet",
                                 "text/csv", 
-                                "text/comma-separated-values"
+                                "text/comma-separated-values",
+                                "text/tab-separated-values",
+                                "text/tsv",
+                                "text/plain",
+                                "*/*"
                             )) 
                         },
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),

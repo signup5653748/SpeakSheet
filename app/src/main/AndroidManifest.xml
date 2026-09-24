@@ -25,11 +25,145 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Excel & Spreadsheet explicit MIME types for VIEW & EDIT (Open with...) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <!-- Modern Excel XLSX & Templates -->
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.template" />
+                <data android:mimeType="application/vnd.ms-excel.sheet.macroEnabled.12" />
+                <data android:mimeType="application/vnd.ms-excel.sheet.binary.macroEnabled.12" />
+                <!-- Legacy Excel XLS & variants -->
+                <data android:mimeType="application/vnd.ms-excel" />
+                <data android:mimeType="application/msexcel" />
+                <data android:mimeType="application/x-msexcel" />
+                <data android:mimeType="application/x-excel" />
+                <data android:mimeType="application/excel" />
+                <data android:mimeType="application/x-dos_ms_excel" />
+                <data android:mimeType="application/x-xls" />
+                <!-- OpenDocument Spreadsheet ODS -->
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" />
+                <data android:mimeType="application/x-vnd.oasis.opendocument.spreadsheet" />
+                <!-- CSV MIME types -->
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/x-csv" />
+                <data android:mimeType="text/x-comma-separated-values" />
+                <data android:mimeType="application/csv" />
+                <data android:mimeType="application/x-csv" />
+                <!-- TSV & Plain Text MIME types -->
+                <data android:mimeType="text/tab-separated-values" />
+                <data android:mimeType="text/tsv" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <!-- File extension patterns for file managers sending generic */* MIME type -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.xlsx" />
+                <data android:pathPattern=".*\\.XLSX" />
+                <data android:pathPattern=".*\\.xls" />
+                <data android:pathPattern=".*\\.XLS" />
+                <data android:pathPattern=".*\\.xlsm" />
+                <data android:pathPattern=".*\\.XLSM" />
+                <data android:pathPattern=".*\\.xlsb" />
+                <data android:pathPattern=".*\\.XLSB" />
+                <data android:pathPattern=".*\\.xltx" />
+                <data android:pathPattern=".*\\.XLTX" />
+                <data android:pathPattern=".*\\.csv" />
+                <data android:pathPattern=".*\\.CSV" />
+                <data android:pathPattern=".*\\.tsv" />
+                <data android:pathPattern=".*\\.TSV" />
+                <data android:pathPattern=".*\\.tab" />
+                <data android:pathPattern=".*\\.TAB" />
+                <data android:pathPattern=".*\\.ods" />
+                <data android:pathPattern=".*\\.ODS" />
+            </intent-filter>
+
+            <!-- File extension patterns for file managers sending application/octet-stream -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:pathPattern=".*\\.xlsx" />
+                <data android:pathPattern=".*\\.XLSX" />
+                <data android:pathPattern=".*\\.xls" />
+                <data android:pathPattern=".*\\.XLS" />
+                <data android:pathPattern=".*\\.xlsm" />
+                <data android:pathPattern=".*\\.XLSM" />
+                <data android:pathPattern=".*\\.xlsb" />
+                <data android:pathPattern=".*\\.XLSB" />
+                <data android:pathPattern=".*\\.xltx" />
+                <data android:pathPattern=".*\\.csv" />
+                <data android:pathPattern=".*\\.CSV" />
+                <data android:pathPattern=".*\\.tsv" />
+                <data android:pathPattern=".*\\.TSV" />
+                <data android:pathPattern=".*\\.tab" />
+                <data android:pathPattern=".*\\.ods" />
+            </intent-filter>
+
+            <!-- File scheme without MIME type (for direct file paths from third-party explorers) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.xlsx" />
+                <data android:pathPattern=".*\\.XLSX" />
+                <data android:pathPattern=".*\\.xls" />
+                <data android:pathPattern=".*\\.XLS" />
+                <data android:pathPattern=".*\\.xlsm" />
+                <data android:pathPattern=".*\\.XLSM" />
+                <data android:pathPattern=".*\\.xlsb" />
+                <data android:pathPattern=".*\\.xltx" />
+                <data android:pathPattern=".*\\.csv" />
+                <data android:pathPattern=".*\\.CSV" />
+                <data android:pathPattern=".*\\.tsv" />
+                <data android:pathPattern=".*\\.TSV" />
+                <data android:pathPattern=".*\\.tab" />
+                <data android:pathPattern=".*\\.ods" />
+            </intent-filter>
+
+            <!-- Share/Send file intent support from other apps -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="application/vnd.ms-excel" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/tab-separated-values" />
+                <data android:mimeType="text/tsv" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
     </application>
