@@ -348,9 +348,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         val cellDescription: String = if (value.isEmpty() && formula.isEmpty()) {
             if (settings.speakEmptyCells) "Empty" else ""
+        } else if (value == "#SPILL!") {
+            "Spill error. Overlapping cells contain data."
+        } else if (value == "#CIRCULAR!") {
+            "Circular reference error"
         } else {
             if (settings.speakFormulas && formula.startsWith("=")) {
-                "Formula equals ${formula.substring(1).replace(":", " to ")}"
+                val spokenFormula = formula.substring(1).replace(":", " to ")
+                if (value.isNotEmpty()) {
+                    "Formula equals $spokenFormula, evaluates to $value"
+                } else {
+                    "Formula equals $spokenFormula"
+                }
             } else {
                 value
             }
@@ -394,6 +403,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun sortColumn(col: Int, ascending: Boolean) {
+        viewModelScope.launch {
+            spreadsheetEngine.sortColumn(col, ascending)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            val colHeader = spreadsheetEngine.getColumnHeaderName(col)
+            val dir = if (ascending) "ascending" else "descending"
+            ttsManager.speak("Sorted $colHeader $dir")
+        }
+    }
+
+    fun toggleColumnWrap(col: Int): Boolean {
+        val newState = spreadsheetEngine.toggleColumnWrap(col)
+        _gridRefreshTrigger.value += 1
+        val colHeader = spreadsheetEngine.getColumnHeaderName(col)
+        val stateStr = if (newState) "enabled" else "disabled"
+        ttsManager.speak("Text wrap $stateStr for $colHeader")
+        return newState
+    }
+
+    fun speakColumn(col: Int) {
+        val colHeader = spreadsheetEngine.getColumnHeaderName(col)
+        val colLetter = spreadsheetEngine.getColumnName(col)
+        var count = 0
+        for (r in 1 until spreadsheetEngine.maxRow) {
+            if (spreadsheetEngine.getCellValue(r, col).isNotEmpty()) count++
+        }
+        val wrapState = if (spreadsheetEngine.isWrapEnabled(col)) "Text wrap enabled." else "Text wrap disabled."
+        ttsManager.speak("Column $colLetter $colHeader. $count items. $wrapState")
+    }
+
+    fun speakRow(row: Int) {
+        val rowNum = row + 1
+        val items = mutableListOf<String>()
+        val maxColToCheck = minOf(spreadsheetEngine.maxCol, 26)
+        for (c in 0 until maxColToCheck) {
+            val v = spreadsheetEngine.getCellValue(row, c)
+            if (v.isNotEmpty()) {
+                val colName = spreadsheetEngine.getColumnName(c)
+                items.add("$colName$rowNum: $v")
+            }
+        }
+        if (items.isNotEmpty()) {
+            ttsManager.speak("Row $rowNum. ${items.joinToString(", ")}")
+        } else {
+            ttsManager.speak("Row $rowNum is empty")
+        }
+    }
+
     fun toggleAnnounceColumnFirst() {
         val current = appSettings.value.announceColumnFirst
         val updated = !current
@@ -408,8 +466,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsManager.speak(if (updated) "Left row numbers enabled" else "Left row numbers disabled")
     }
 
+    private var copiedCellBgColor: Int? = null
+    private var copiedCellTextColor: Int? = null
+
     fun copyCell(context: android.content.Context, row: Int, col: Int) {
         val value = spreadsheetEngine.getCellFormulaOrValue(row, col)
+        copiedCellBgColor = spreadsheetEngine.getCellColor(row, col)
+        copiedCellTextColor = spreadsheetEngine.getCellTextColor(row, col)
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
@@ -418,7 +481,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (value.isNotEmpty()) {
             ttsManager.speak("Copied cell $cellName: $value")
         } else {
-            ttsManager.speak("Copied empty cell $cellName")
+            ttsManager.speak("Copied cell $cellName")
         }
     }
 
@@ -428,11 +491,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val text = item?.text?.toString() ?: ""
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
-        if (text.isNotEmpty()) {
-            updateCell(row, col, text)
-            ttsManager.speak("Pasted $text into $cellName")
+        if (text.isNotEmpty() || copiedCellBgColor != null || copiedCellTextColor != null) {
+            if (text.isNotEmpty()) {
+                updateCell(row, col, text)
+            }
+            if (copiedCellBgColor != null) {
+                setCellColor(row, col, copiedCellBgColor)
+            }
+            if (copiedCellTextColor != null) {
+                setCellTextColor(row, col, copiedCellTextColor)
+            }
+            ttsManager.speak("Pasted into $cellName")
         } else {
             ttsManager.speak("Clipboard is empty")
+        }
+    }
+
+    fun setCellColor(r: Int, c: Int, color: Int?) {
+        spreadsheetEngine.setCellColor(r, c, color)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        val colName = spreadsheetEngine.getColumnName(c)
+        val cellName = "$colName${r + 1}"
+        if (color != null) {
+            ttsManager.speak("Background color set for $cellName")
+        } else {
+            ttsManager.speak("Background color cleared for $cellName")
+        }
+    }
+
+    fun setCellTextColor(r: Int, c: Int, color: Int?) {
+        spreadsheetEngine.setCellTextColor(r, c, color)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        val colName = spreadsheetEngine.getColumnName(c)
+        val cellName = "$colName${r + 1}"
+        if (color != null) {
+            ttsManager.speak("Text color set for $cellName")
+        } else {
+            ttsManager.speak("Text color cleared for $cellName")
+        }
+    }
+
+    fun setColumnColor(c: Int, color: Int?) {
+        spreadsheetEngine.setColumnColor(c, color)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        val colName = spreadsheetEngine.getColumnName(c)
+        val headerName = spreadsheetEngine.getColumnHeaderName(c)
+        if (color != null) {
+            ttsManager.speak("Background color set for column $colName $headerName")
+        } else {
+            ttsManager.speak("Background color cleared for column $colName $headerName")
+        }
+    }
+
+    fun setColumnTextColor(c: Int, color: Int?) {
+        spreadsheetEngine.setColumnTextColor(c, color)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        val colName = spreadsheetEngine.getColumnName(c)
+        val headerName = spreadsheetEngine.getColumnHeaderName(c)
+        if (color != null) {
+            ttsManager.speak("Text color set for column $colName $headerName")
+        } else {
+            ttsManager.speak("Text color cleared for column $colName $headerName")
+        }
+    }
+
+    fun setRowColor(r: Int, color: Int?) {
+        spreadsheetEngine.setRowColor(r, color)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        val rowNum = r + 1
+        if (color != null) {
+            ttsManager.speak("Background color set for row $rowNum")
+        } else {
+            ttsManager.speak("Background color cleared for row $rowNum")
+        }
+    }
+
+    fun setRowTextColor(r: Int, color: Int?) {
+        spreadsheetEngine.setRowTextColor(r, color)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        val rowNum = r + 1
+        if (color != null) {
+            ttsManager.speak("Text color set for row $rowNum")
+        } else {
+            ttsManager.speak("Text color cleared for row $rowNum")
         }
     }
 
@@ -440,6 +587,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
         updateCell(row, col, "")
+        setCellColor(row, col, null)
+        setCellTextColor(row, col, null)
         ttsManager.speak("Deleted cell $cellName")
     }
 

@@ -1,6 +1,7 @@
 package com.speaksheet.ui.screens
 
 import android.content.Context
+import java.util.Locale
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -10,25 +11,38 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -41,6 +55,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -53,13 +68,18 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,6 +88,7 @@ import com.speaksheet.ui.theme.GreenPrimary
 import com.speaksheet.viewmodel.MainViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -79,6 +100,9 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
     data class CachedCellLayout(
         val text: String,
         val isHeader: Boolean,
+        val isWrapped: Boolean,
+        val maxWidthPx: Int,
+        val textColor: Color,
         val layout: TextLayoutResult
     )
 
@@ -93,20 +117,30 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
         c: Int,
         text: String,
         isHeader: Boolean,
-        style: TextStyle
+        style: TextStyle,
+        isWrapped: Boolean = false,
+        maxWidthPx: Int = Int.MAX_VALUE
     ): TextLayoutResult {
         val key = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
         val cached = cellCache[key]
-        if (cached != null && cached.text == text && cached.isHeader == isHeader) {
+        if (cached != null && cached.text == text && cached.isHeader == isHeader && cached.isWrapped == isWrapped && cached.maxWidthPx == maxWidthPx && cached.textColor == style.color) {
             return cached.layout
         }
-        val layout = textMeasurer.measure(
-            text = text,
-            style = style,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        cellCache[key] = CachedCellLayout(text, isHeader, layout)
+        val layout = if (isWrapped) {
+            textMeasurer.measure(
+                text = text,
+                style = style,
+                constraints = Constraints(maxWidth = maxWidthPx.coerceAtLeast(1))
+            )
+        } else {
+            textMeasurer.measure(
+                text = text,
+                style = style,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        cellCache[key] = CachedCellLayout(text, isHeader, isWrapped, maxWidthPx, style.color, layout)
         return layout
     }
 
@@ -157,6 +191,19 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
     }
 }
 
+enum class ColorPickerTab { BACKGROUND, TEXT }
+
+sealed class ColorTarget {
+    data class Cell(val r: Int, val c: Int) : ColorTarget()
+    data class Column(val c: Int) : ColorTarget()
+    data class Row(val r: Int) : ColorTarget()
+}
+
+data class ColorPickerState(
+    val target: ColorTarget,
+    val initialTab: ColorPickerTab = ColorPickerTab.BACKGROUND
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SpreadsheetScreen(
@@ -176,10 +223,14 @@ fun SpreadsheetScreen(
     var showMenuForCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showZoomControlsMenu by remember { mutableStateOf(false) }
+    var showColumnMenu by remember { mutableStateOf<Int?>(null) }
+    var showRowMenu by remember { mutableStateOf<Int?>(null) }
+    var colorPickerState by remember { mutableStateOf<ColorPickerState?>(null) }
     
     val currentFileUri by viewModel.currentFileUri.collectAsStateWithLifecycle()
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
+    var showSaveConfirmDialog by remember { mutableStateOf(false) }
 
     // Pan offset state with smooth animation support
     val animPanOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
@@ -259,9 +310,23 @@ fun SpreadsheetScreen(
         cellLayoutCache.clear()
     }
 
+    val rowCellHeightMeasurer: (Int, Int, String, Float) -> Float = remember(textMeasurer, textStyle, headerRowStyle, density) {
+        { r: Int, c: Int, text: String, availableWidthPx: Float ->
+            val pad = 5f * density
+            val maxTextW = (availableWidthPx - 2 * pad).roundToInt().coerceAtLeast(1)
+            val style = if (r == 0) headerRowStyle else textStyle
+            val res = textMeasurer.measure(
+                text = text,
+                style = style,
+                constraints = Constraints(maxWidth = maxTextW)
+            )
+            res.size.height.toFloat() + 2 * pad
+        }
+    }
+
     // Ensure layout cache is updated for unscaled density and largeTouchMode only (never on zoom)
     LaunchedEffect(refreshTrigger, density, settings.largeTouchMode) {
-        engine.updateLayoutIfNeeded(density, settings.largeTouchMode)
+        engine.updateLayoutIfNeeded(density, settings.largeTouchMode, rowCellHeightMeasurer)
     }
 
     fun clampPan(offset: Offset, zoom: Float): Offset {
@@ -433,7 +498,7 @@ fun SpreadsheetScreen(
                 actions = {
                     // Save document button
                     IconButton(
-                        onClick = { viewModel.saveDocument() },
+                        onClick = { showSaveConfirmDialog = true },
                         modifier = Modifier.testTag("top_bar_save_button")
                     ) {
                         Icon(
@@ -497,7 +562,7 @@ fun SpreadsheetScreen(
                                 },
                                 onClick = {
                                     showOptionsMenu = false
-                                    viewModel.saveDocument()
+                                    showSaveConfirmDialog = true
                                 },
                                 modifier = Modifier.testTag("menu_save_document")
                             )
@@ -664,7 +729,7 @@ fun SpreadsheetScreen(
                     val cellCoord = "$cellLetter${curRow + 1}"
                     val cellVal = engine.getCellValue(curRow, curCol)
                     
-                    // Top Row: Prominent Active Cell Card & Actions (Edit, Copy, Paste, Delete, Speak)
+                    // Top Row: Prominent Active Cell Card (Click to Edit) & Actions (Copy, Paste, Delete, Speak)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -679,8 +744,11 @@ fun SpreadsheetScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(end = 8.dp)
-                                .clickable {
-                                    viewModel.speakCell(curRow, curCol)
+                                .testTag("selected_cell_card")
+                                .clickable(
+                                    onClickLabel = "Edit cell $cellCoord"
+                                ) {
+                                    editingCell = Pair(curRow, curCol)
                                 }
                         ) {
                             Row(
@@ -712,7 +780,7 @@ fun SpreadsheetScreen(
                                         )
                                     }
                                     Text(
-                                        text = if (cellVal.isEmpty()) "(empty cell)" else cellVal,
+                                        text = if (cellVal.isEmpty()) "(empty cell - tap to edit)" else cellVal,
                                         fontWeight = FontWeight.Medium,
                                         color = if (cellVal.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
                                         fontSize = 12.sp,
@@ -720,6 +788,13 @@ fun SpreadsheetScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = GreenPrimary.copy(alpha = 0.6f)
+                                )
                             }
                         }
                         
@@ -727,12 +802,6 @@ fun SpreadsheetScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            FilledTonalIconButton(
-                                onClick = { editingCell = Pair(curRow, curCol) },
-                                modifier = Modifier.size(38.dp).testTag("action_edit")
-                            ) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit Cell", modifier = Modifier.size(18.dp))
-                            }
                             FilledTonalIconButton(
                                 onClick = { viewModel.copyCell(context, curRow, curCol) },
                                 modifier = Modifier.size(38.dp).testTag("action_copy")
@@ -757,6 +826,12 @@ fun SpreadsheetScreen(
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Speak Cell", modifier = Modifier.size(18.dp))
                             }
+                            FilledTonalIconButton(
+                                onClick = { showColumnMenu = curCol },
+                                modifier = Modifier.size(38.dp).testTag("action_column_menu")
+                            ) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Column Options", modifier = Modifier.size(18.dp))
+                            }
                         }
                     }
 
@@ -777,8 +852,8 @@ fun SpreadsheetScreen(
                             onClick = { moveSelection(deltaRow = 0, deltaCol = -1) },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                             ),
                             modifier = Modifier.weight(1f).height(44.dp).testTag("nav_left")
                         ) {
@@ -819,8 +894,8 @@ fun SpreadsheetScreen(
                             onClick = { moveSelection(deltaRow = 0, deltaCol = 1) },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                             ),
                             modifier = Modifier.weight(1f).height(44.dp).testTag("nav_right")
                         ) {
@@ -856,6 +931,42 @@ fun SpreadsheetScreen(
                             var longPressTriggered = false
                             var previousPointerCount = 1
 
+                            var longPressJob: Job? = coroutineScope.launch {
+                                delay(viewConfiguration.longPressTimeoutMillis)
+                                if (!isDragging && !isMultiTouch && !longPressTriggered) {
+                                    longPressTriggered = true
+                                    val headerW = if (showRowNumbers) 44f * density else 0f
+                                    val headerH = 32f * density
+                                    val headerTouchH = headerH + 10f * density
+                                    val screenX = startPos.x
+                                    val screenY = startPos.y
+                                    val curPan = animPanOffset.value
+
+                                    if (screenX >= headerW && screenY <= headerTouchH) {
+                                        val gridX = (screenX - headerW - curPan.x) / userZoom
+                                        val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                        selectedCell = Pair(0, c)
+                                        showColumnMenu = c
+                                        triggerHaptic()
+                                    } else if (screenX >= headerW && screenY > headerTouchH) {
+                                        val gridX = (screenX - headerW - curPan.x) / userZoom
+                                        val gridY = (screenY - headerH - curPan.y) / userZoom
+                                        val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                        val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                        selectedCell = Pair(r, c)
+                                        showMenuForCell = Pair(r, c)
+                                        triggerHaptic()
+                                    } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
+                                        val gridY = (screenY - headerH - curPan.y) / userZoom
+                                        val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                        val currentC = selectedCell?.second ?: 0
+                                        selectedCell = Pair(r, currentC)
+                                        showRowMenu = r
+                                        triggerHaptic()
+                                    }
+                                }
+                            }
+
                             // Light smoothing state for centroid & zoom
                             var smoothedCentroid: Offset? = null
                             var smoothedZoom = 1.0f
@@ -866,6 +977,7 @@ fun SpreadsheetScreen(
                                 val count = activePointers.size
 
                                 if (count >= 2) {
+                                    longPressJob?.cancel()
                                     isMultiTouch = true
                                     scrollJob?.cancel()
 
@@ -915,6 +1027,7 @@ fun SpreadsheetScreen(
                                     // reset lastPos and startPos cleanly on this frame instead of treating the previous
                                     // centroid as a new drag start — preventing the automatic zoom-out/jump glitch.
                                     if (previousPointerCount >= 2) {
+                                        longPressJob?.cancel()
                                         lastPos = pointer.position
                                         startPos = pointer.position
                                         previousPointerCount = 1
@@ -933,11 +1046,26 @@ fun SpreadsheetScreen(
                                     } else {
                                         val dist = (pointer.position - startPos).getDistance()
                                         val elapsed = System.currentTimeMillis() - downTime
+                                        val headerW = if (showRowNumbers) 44f * density else 0f
+                                        val headerH = 32f * density
+                                        val headerTouchH = headerH + 10f * density
+                                        val isHeaderStart = startPos.x >= headerW && startPos.y <= headerTouchH
+                                        val isRowStart = showRowNumbers && startPos.x < headerW && startPos.y > headerH
 
-                                        // Do not start single-finger panning immediately on touch-slop breach —
-                                        // briefly hold/confirm pointer count first (~60ms or distinct 2.2x slop drag),
-                                        // so a second finger landing a few ms after the first isn't misread as a 1-finger drag.
-                                        if ((dist > touchSlop && elapsed >= 60L) || dist > touchSlop * 2.2f) {
+                                        // For touches starting in the column or row header, protect against accidental cancellation
+                                        // due to natural thumb tremor. Only start drag if clear intentional swipe is detected.
+                                        val shouldStartDrag = if (isHeaderStart) {
+                                            val deltaX = kotlin.math.abs(pointer.position.x - startPos.x)
+                                            deltaX > touchSlop * 2.5f
+                                        } else if (isRowStart) {
+                                            val deltaY = kotlin.math.abs(pointer.position.y - startPos.y)
+                                            deltaY > touchSlop * 2.5f
+                                        } else {
+                                            (dist > touchSlop && elapsed >= 60L) || dist > touchSlop * 2.2f
+                                        }
+
+                                        if (shouldStartDrag) {
+                                            longPressJob?.cancel()
                                             isDragging = true
                                             scrollJob?.cancel()
                                             lastPos = pointer.position
@@ -945,19 +1073,30 @@ fun SpreadsheetScreen(
                                         } else if (!isMultiTouch && !longPressTriggered) {
                                             if (elapsed >= viewConfiguration.longPressTimeoutMillis) {
                                                 longPressTriggered = true
-                                                val headerW = if (showRowNumbers) 44f * density else 0f
-                                                val headerH = 32f * density
                                                 val screenX = startPos.x
                                                 val screenY = startPos.y
                                                 val curPan = animPanOffset.value
 
-                                                if (screenX >= headerW && screenY > headerH) {
+                                                if (screenX >= headerW && screenY <= headerTouchH) {
+                                                    val gridX = (screenX - headerW - curPan.x) / userZoom
+                                                    val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                    selectedCell = Pair(0, c)
+                                                    showColumnMenu = c
+                                                    triggerHaptic()
+                                                } else if (screenX >= headerW && screenY > headerTouchH) {
                                                     val gridX = (screenX - headerW - curPan.x) / userZoom
                                                     val gridY = (screenY - headerH - curPan.y) / userZoom
                                                     val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                                     val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
                                                     selectedCell = Pair(r, c)
                                                     showMenuForCell = Pair(r, c)
+                                                    triggerHaptic()
+                                                } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
+                                                    val gridY = (screenY - headerH - curPan.y) / userZoom
+                                                    val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                                    val currentC = selectedCell?.second ?: 0
+                                                    selectedCell = Pair(r, currentC)
+                                                    showRowMenu = r
                                                     triggerHaptic()
                                                 }
                                                 pointer.consume()
@@ -967,51 +1106,99 @@ fun SpreadsheetScreen(
                                     previousPointerCount = 1
                                 } else {
                                     // All fingers lifted
-                                    if (!isMultiTouch && !isDragging && !longPressTriggered) {
-                                        val now = System.currentTimeMillis()
-                                        val isDoubleTap = (now - lastTapTimestamp < 320) &&
-                                                ((startPos - lastTapPosition).getDistance() < 24 * density)
+                                    longPressJob?.cancel()
+                                    val now = System.currentTimeMillis()
+                                    val elapsed = now - downTime
+                                    val wasLongPress = elapsed >= viewConfiguration.longPressTimeoutMillis
 
+                                    if (!isMultiTouch && !isDragging) {
                                         val headerW = if (showRowNumbers) 44f * density else 0f
                                         val headerH = 32f * density
+                                        val headerTouchH = headerH + 10f * density
                                         val screenX = startPos.x
                                         val screenY = startPos.y
                                         val curPan = animPanOffset.value
 
-                                        if (screenX >= headerW && screenY > headerH) {
-                                            // Cell grid tapped
-                                            val gridX = (screenX - headerW - curPan.x) / userZoom
-                                            val gridY = (screenY - headerH - curPan.y) / userZoom
-                                            val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                            val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
-
-                                            if (isDoubleTap) {
-                                                // Keep double-tap strictly for editing cell — do NOT double-tap-to-zoom
-                                                lastTapTimestamp = 0L
+                                        if (!longPressTriggered && wasLongPress) {
+                                            longPressTriggered = true
+                                            if (screenX >= headerW && screenY <= headerTouchH) {
+                                                val gridX = (screenX - headerW - curPan.x) / userZoom
+                                                val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                selectedCell = Pair(0, c)
+                                                showColumnMenu = c
+                                                triggerHaptic()
+                                            } else if (screenX >= headerW && screenY > headerTouchH) {
+                                                val gridX = (screenX - headerW - curPan.x) / userZoom
+                                                val gridY = (screenY - headerH - curPan.y) / userZoom
+                                                val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                                val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
                                                 selectedCell = Pair(r, c)
-                                                editingCell = Pair(r, c)
-                                            } else {
-                                                lastTapTimestamp = now
-                                                lastTapPosition = startPos
-                                                selectedCell = Pair(r, c)
-                                                viewModel.speakCell(r, c)
+                                                showMenuForCell = Pair(r, c)
+                                                triggerHaptic()
+                                            } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
+                                                val gridY = (screenY - headerH - curPan.y) / userZoom
+                                                val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                                val currentC = selectedCell?.second ?: 0
+                                                selectedCell = Pair(r, currentC)
+                                                showRowMenu = r
                                                 triggerHaptic()
                                             }
-                                        } else if (screenY <= headerH && screenX >= headerW) {
-                                            // Tapped column header
-                                            val gridX = (screenX - headerW - curPan.x) / userZoom
-                                            val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
-                                            selectedCell = Pair(0, c)
-                                            viewModel.speakCell(0, c)
-                                            triggerHaptic()
-                                        } else if (screenX < headerW && screenY > headerH) {
-                                            // Tapped row header
-                                            val gridY = (screenY - headerH - curPan.y) / userZoom
-                                            val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                            val currentC = selectedCell?.second ?: 0
-                                            selectedCell = Pair(r, currentC)
-                                            viewModel.speakCell(r, currentC)
-                                            triggerHaptic()
+                                        } else if (!longPressTriggered) {
+                                            val isDoubleTap = (now - lastTapTimestamp < 320) &&
+                                                    ((startPos - lastTapPosition).getDistance() < 24 * density)
+
+                                            if (screenX >= headerW && screenY <= headerTouchH) {
+                                                // Tapped column header
+                                                val gridX = (screenX - headerW - curPan.x) / userZoom
+                                                val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                if (isDoubleTap) {
+                                                    lastTapTimestamp = 0L
+                                                    selectedCell = Pair(0, c)
+                                                    showColumnMenu = c
+                                                    triggerHaptic()
+                                                } else {
+                                                    lastTapTimestamp = now
+                                                    lastTapPosition = startPos
+                                                    selectedCell = Pair(0, c)
+                                                    viewModel.speakCell(0, c)
+                                                    triggerHaptic()
+                                                }
+                                            } else if (screenX >= headerW && screenY > headerTouchH) {
+                                                // Cell grid tapped
+                                                val gridX = (screenX - headerW - curPan.x) / userZoom
+                                                val gridY = (screenY - headerH - curPan.y) / userZoom
+                                                val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                                val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+
+                                                if (isDoubleTap) {
+                                                    // Keep double-tap strictly for editing cell — do NOT double-tap-to-zoom
+                                                    lastTapTimestamp = 0L
+                                                    selectedCell = Pair(r, c)
+                                                    editingCell = Pair(r, c)
+                                                } else {
+                                                    lastTapTimestamp = now
+                                                    lastTapPosition = startPos
+                                                    selectedCell = Pair(r, c)
+                                                    viewModel.speakCell(r, c)
+                                                    triggerHaptic()
+                                                }
+                                            } else if (screenX < headerW && screenY > headerH) {
+                                                // Tapped row header
+                                                val gridY = (screenY - headerH - curPan.y) / userZoom
+                                                val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                                val currentC = selectedCell?.second ?: 0
+                                                selectedCell = Pair(r, currentC)
+                                                if (isDoubleTap) {
+                                                    lastTapTimestamp = 0L
+                                                    showRowMenu = r
+                                                    triggerHaptic()
+                                                } else {
+                                                    lastTapTimestamp = now
+                                                    lastTapPosition = startPos
+                                                    viewModel.speakRow(r)
+                                                    triggerHaptic()
+                                                }
+                                            }
                                         }
                                     }
                                     break
@@ -1021,6 +1208,7 @@ fun SpreadsheetScreen(
                     }
             ) {
                 val t = refreshTrigger // observe trigger
+                engine.updateLayoutIfNeeded(density, settings.largeTouchMode, rowCellHeightMeasurer)
                 val panOffset = animPanOffset.value
                 val headerW = if (showRowNumbers) 44f * density else 0f
                 val headerH = 32f * density
@@ -1071,7 +1259,30 @@ fun SpreadsheetScreen(
 
                                 val isSelected = selectedCell?.first == r && selectedCell?.second == c
 
-                                // Cell Background
+                                // Rendering priority:
+                                // 1. Cell color
+                                // 2. Row color
+                                // 3. Column color
+                                // 4. Default background
+                                val cellColorInt = engine.getCellColor(r, c)
+                                val rowColorInt = engine.getRowColor(r)
+                                val colColorInt = engine.getColumnColor(c)
+                                val customBgColor = when {
+                                    cellColorInt != null -> Color(cellColorInt)
+                                    rowColorInt != null -> Color(rowColorInt)
+                                    colColorInt != null -> Color(colColorInt)
+                                    else -> null
+                                }
+
+                                if (customBgColor != null) {
+                                    drawRect(
+                                        color = customBgColor,
+                                        topLeft = Offset(colLeft, rowTop),
+                                        size = Size(colWidth, rowHeight)
+                                    )
+                                }
+
+                                // Cell Selection Highlight (Overlay stays visible on top)
                                 if (isSelected) {
                                     drawRect(
                                         color = highlightFill,
@@ -1098,13 +1309,38 @@ fun SpreadsheetScreen(
                                         bottom = rowBottom - pad
                                     ) {
                                         val isHeaderRow = r == 0
-                                        val effectiveStyle = if (isHeaderRow) headerRowStyle else textStyle
+                                        val isWrapped = engine.isWrapEnabled(c)
+                                        val cellTextColorInt = engine.getCellTextColor(r, c)
+                                        val rowTextColorInt = engine.getRowTextColor(r)
+                                        val colTextColorInt = engine.getColumnTextColor(c)
+                                        val customTextColor = when {
+                                            cellTextColorInt != null -> Color(cellTextColorInt)
+                                            rowTextColorInt != null -> Color(rowTextColorInt)
+                                            colTextColorInt != null -> Color(colTextColorInt)
+                                            else -> null
+                                        }
+
+                                        val effectiveStyle = if (customTextColor != null) {
+                                            if (isHeaderRow) headerRowStyle.copy(color = customTextColor) else textStyle.copy(color = customTextColor)
+                                        } else if (isHeaderRow) {
+                                            headerRowStyle
+                                        } else if (customBgColor != null) {
+                                            val lum = 0.2126f * customBgColor.red + 0.7152f * customBgColor.green + 0.0722f * customBgColor.blue
+                                            val contrastingColor = if (lum > 0.5f) Color(0xFF111111) else Color(0xFFF5F5F5)
+                                            textStyle.copy(color = contrastingColor)
+                                        } else {
+                                            textStyle
+                                        }
+                                        val availableTextW = (colWidth - 2 * pad).roundToInt().coerceAtLeast(1)
+
                                         val textLayout = cellLayoutCache.getCellLayout(
                                             r = r,
                                             c = c,
                                             text = text,
                                             isHeader = isHeaderRow,
-                                            style = effectiveStyle
+                                            style = effectiveStyle,
+                                            isWrapped = isWrapped,
+                                            maxWidthPx = availableTextW
                                         )
 
                                         val isRight = engine.isRightAligned(r, c)
@@ -1113,7 +1349,11 @@ fun SpreadsheetScreen(
                                         } else {
                                             colLeft + pad
                                         }
-                                        val textY = rowTop + (rowHeight - textLayout.size.height) / 2
+                                        val textY = if (isWrapped) {
+                                            rowTop + pad
+                                        } else {
+                                            rowTop + (rowHeight - textLayout.size.height) / 2
+                                        }
 
                                         drawText(
                                             textLayoutResult = textLayout,
@@ -1181,6 +1421,20 @@ fun SpreadsheetScreen(
 
                         val isColSelected = selectedCell?.second == hc
                         val effectiveHeaderStyle = if (isColSelected) headerStyleSelected else headerStyleNormal
+
+                        val colColorInt = engine.getColumnColor(hc)
+                        if (colColorInt != null) {
+                            drawRect(
+                                color = Color(colColorInt).copy(alpha = 0.35f),
+                                topLeft = Offset(colLeft, 0f),
+                                size = Size(colWidth, headerH)
+                            )
+                            drawRect(
+                                color = Color(colColorInt),
+                                topLeft = Offset(colLeft, headerH - 3.5f * density),
+                                size = Size(colWidth, 3.5f * density)
+                            )
+                        }
 
                         drawRect(
                             color = gridColor,
@@ -1253,6 +1507,20 @@ fun SpreadsheetScreen(
                             val isRowSelected = selectedCell?.first == hr
                             val headerColor = if (isRowSelected) GreenPrimary else headerStyle.color
 
+                            val rowColorInt = engine.getRowColor(hr)
+                            if (rowColorInt != null) {
+                                drawRect(
+                                    color = Color(rowColorInt).copy(alpha = 0.35f),
+                                    topLeft = Offset(0f, rowTop),
+                                    size = Size(headerW, rowHeight)
+                                )
+                                drawRect(
+                                    color = Color(rowColorInt),
+                                    topLeft = Offset(headerW - 3.5f * density, rowTop),
+                                    size = Size(3.5f * density, rowHeight)
+                                )
+                            }
+
                             drawRect(
                                 color = gridColor,
                                 topLeft = Offset(0f, rowTop),
@@ -1306,41 +1574,216 @@ fun SpreadsheetScreen(
     // Edit Dialog
     editingCell?.let { (r, c) ->
         val formulaOrValue = engine.getCellFormulaOrValue(r, c)
-        var textValue by remember { mutableStateOf(formulaOrValue) }
+        var textFieldValue by remember(r, c) {
+            mutableStateOf(TextFieldValue(formulaOrValue, selection = TextRange(formulaOrValue.length)))
+        }
+        var isFormulaExpanded by remember(r, c) {
+            mutableStateOf(formulaOrValue.startsWith("="))
+        }
         val headerName = engine.getColumnHeaderName(c)
         val cellTitle = if (r > 0 && headerName.isNotEmpty() && !headerName.startsWith("Column ")) {
             "Edit ${engine.getColumnName(c)}${r + 1} ($headerName)"
         } else {
             "Edit ${engine.getColumnName(c)}${r + 1}"
         }
+
+        data class FormulaChipItem(
+            val name: String,
+            val template: String,
+            val cursorOffset: Int,
+            val description: String
+        )
+
+        val formulaOptions = remember {
+            listOf(
+                FormulaChipItem("SUM", "=SUM(:)", 5, "Insert SUM formula: calculate sum of range values"),
+                FormulaChipItem("AVERAGE", "=AVERAGE(:)", 9, "Insert AVERAGE formula: calculate average of range values"),
+                FormulaChipItem("COUNT", "=COUNT(:)", 7, "Insert COUNT formula: count numeric values in range"),
+                FormulaChipItem("MIN", "=MIN(:)", 5, "Insert MIN formula: calculate minimum value in range"),
+                FormulaChipItem("MAX", "=MAX(:)", 5, "Insert MAX formula: calculate maximum value in range"),
+                FormulaChipItem("SORT", "=SORT(:)", 6, "Insert SORT formula: sort range values ascending or descending")
+            )
+        }
+
+        fun insertTemplate(item: FormulaChipItem) {
+            val curText = textFieldValue.text
+            val selStart = textFieldValue.selection.min.coerceIn(0, curText.length)
+            val selEnd = textFieldValue.selection.max.coerceIn(0, curText.length)
+
+            if (curText.isEmpty() || curText == "=") {
+                textFieldValue = TextFieldValue(
+                    text = item.template,
+                    selection = TextRange(item.cursorOffset)
+                )
+            } else {
+                val before = curText.substring(0, selStart)
+                val after = curText.substring(selEnd)
+                val insertText = if (before.isEmpty() || before.endsWith("=")) {
+                    if (before.endsWith("=")) item.template.removePrefix("=") else item.template
+                } else {
+                    item.template.removePrefix("=")
+                }
+                val offsetInInsert = if (before.isEmpty()) item.cursorOffset else (item.cursorOffset - 1)
+                val newText = before + insertText + after
+                val newCursor = (selStart + offsetInInsert).coerceIn(0, newText.length)
+                textFieldValue = TextFieldValue(
+                    text = newText,
+                    selection = TextRange(newCursor)
+                )
+            }
+        }
         
         AlertDialog(
             onDismissRequest = { editingCell = null },
             title = { Text(cellTitle) },
             text = {
-                OutlinedTextField(
-                    value = textValue,
-                    onValueChange = { textValue = it },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = GreenPrimary,
-                        focusedLabelColor = GreenPrimary
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = textFieldValue,
+                        onValueChange = { textFieldValue = it },
+                        label = { Text("Cell Value or Formula") },
+                        placeholder = { Text("Enter text, number, or insert formula") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 90.dp)
+                            .testTag("cell_edit_textfield"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GreenPrimary,
+                            focusedLabelColor = GreenPrimary
+                        )
                     )
-                )
+
+                    // Collapsible Formula Section
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("formula_section_toggle")
+                            .clickable(
+                                onClickLabel = if (isFormulaExpanded) "Collapse formula section" else "Expand formula section"
+                            ) {
+                                isFormulaExpanded = !isFormulaExpanded
+                            }
+                            .semantics {
+                                contentDescription = "Formula section, ${if (isFormulaExpanded) "Expanded" else "Collapsed"}"
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Functions,
+                                    contentDescription = null,
+                                    tint = GreenPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Formula",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Icon(
+                                imageVector = if (isFormulaExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (isFormulaExpanded) "Collapse" else "Expand",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (isFormulaExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 2.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Available formulas (tap to insert at cursor):",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            // Tappable formula chips
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                formulaOptions.forEach { fItem ->
+                                    SuggestionChip(
+                                        onClick = {
+                                            insertTemplate(fItem)
+                                            triggerHaptic()
+                                        },
+                                        label = {
+                                            Text(
+                                                text = fItem.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp
+                                            )
+                                        },
+                                        colors = SuggestionChipDefaults.suggestionChipColors(
+                                            containerColor = GreenPrimary.copy(alpha = 0.12f),
+                                            labelColor = GreenPrimary
+                                        ),
+                                        border = SuggestionChipDefaults.suggestionChipBorder(
+                                            enabled = true,
+                                            borderColor = GreenPrimary.copy(alpha = 0.4f)
+                                        ),
+                                        modifier = Modifier
+                                            .testTag("chip_formula_${fItem.name.lowercase()}")
+                                            .semantics {
+                                                contentDescription = fItem.description
+                                            }
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "Examples: =SORT(A2:A20) sorts single column ascending, =SORT(A2:B20, 1) keeps rows together, =SORT(A2:B20, 1, \"DESC\") sorts descending.",
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                            )
+                        }
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.updateCell(r, c, textValue)
+                        viewModel.updateCell(r, c, textFieldValue.text)
                         editingCell = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("save_cell_button")
                 ) {
                     Text("Save")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editingCell = null }) { Text("Cancel") }
+                TextButton(
+                    onClick = { editingCell = null },
+                    modifier = Modifier.testTag("cancel_cell_button")
+                ) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -1352,12 +1795,26 @@ fun SpreadsheetScreen(
             title = { Text("Cell Options: ${engine.getColumnName(c)}${r + 1}") },
             text = {
                 Column {
+                    val wrapLabel = if (engine.isWrapEnabled(c)) "Disable text wrap in this column" else "Wrap text in this column"
                     val actions = listOf(
+                        "Change Background Color" to {
+                            colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
+                        },
+                        "Change Text Color" to {
+                            colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
+                        },
+                        "Clear Cell Colors (Reset)" to {
+                            viewModel.setCellColor(r, c, null)
+                            viewModel.setCellTextColor(r, c, null)
+                        },
                         "Edit Cell" to { editingCell = Pair(r, c) },
                         "Copy Cell" to { viewModel.copyCell(context, r, c) },
                         "Paste into Cell" to { viewModel.pasteCell(context, r, c) },
                         "Delete Cell Content" to { viewModel.deleteCell(r, c) },
-                        "Speak Cell Content" to { viewModel.speakCell(r, c) }
+                        "Speak Cell Content" to { viewModel.speakCell(r, c) },
+                        wrapLabel to { viewModel.toggleColumnWrap(c) },
+                        "Sort Column Ascending (A-Z)" to { viewModel.sortColumn(c, true) },
+                        "Sort Column Descending (Z-A)" to { viewModel.sortColumn(c, false) }
                     )
                     actions.forEach { (label, action) ->
                         Text(
@@ -1377,6 +1834,155 @@ fun SpreadsheetScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showMenuForCell = null }) { Text("Close") }
+            }
+        )
+    }
+
+    // Column Header Context Menu Dialog
+    showColumnMenu?.let { col ->
+        val isWrapped = engine.isWrapEnabled(col)
+        val colLetter = engine.getColumnName(col)
+        val headerName = engine.getColumnHeaderName(col)
+        val titleText = if (headerName.isNotEmpty() && !headerName.startsWith("Column ")) {
+            "Column $colLetter: $headerName"
+        } else {
+            "Column $colLetter Options"
+        }
+
+        AlertDialog(
+            onDismissRequest = { showColumnMenu = null },
+            title = { Text(titleText) },
+            text = {
+                Column {
+                    val wrapLabel = if (isWrapped) "Disable text wrap in this column" else "Wrap text in this column"
+                    val actions = listOf(
+                        "Change Column Background Color" to {
+                            colorPickerState = ColorPickerState(ColorTarget.Column(col), ColorPickerTab.BACKGROUND)
+                        },
+                        "Change Column Text Color" to {
+                            colorPickerState = ColorPickerState(ColorTarget.Column(col), ColorPickerTab.TEXT)
+                        },
+                        "Clear Column Colors (Reset)" to {
+                            viewModel.setColumnColor(col, null)
+                            viewModel.setColumnTextColor(col, null)
+                        },
+                        wrapLabel to { viewModel.toggleColumnWrap(col) },
+                        "Sort Column Ascending (A-Z)" to { viewModel.sortColumn(col, true) },
+                        "Sort Column Descending (Z-A)" to { viewModel.sortColumn(col, false) },
+                        "Speak Column Summary" to { viewModel.speakColumn(col) }
+                    )
+                    actions.forEach { (label, action) ->
+                        Text(
+                            text = label,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showColumnMenu = null
+                                    action()
+                                }
+                                .padding(16.dp),
+                            color = GreenPrimary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showColumnMenu = null }) { Text("Close") }
+            }
+        )
+    }
+
+    // Row Header Context Menu Dialog
+    showRowMenu?.let { row ->
+        val rowNum = row + 1
+        AlertDialog(
+            onDismissRequest = { showRowMenu = null },
+            title = { Text("Row $rowNum Options") },
+            text = {
+                Column {
+                    val actions = listOf(
+                        "Change Row Background Color" to {
+                            colorPickerState = ColorPickerState(ColorTarget.Row(row), ColorPickerTab.BACKGROUND)
+                        },
+                        "Change Row Text Color" to {
+                            colorPickerState = ColorPickerState(ColorTarget.Row(row), ColorPickerTab.TEXT)
+                        },
+                        "Clear Row Colors (Reset)" to {
+                            viewModel.setRowColor(row, null)
+                            viewModel.setRowTextColor(row, null)
+                        },
+                        "Speak Entire Row" to { viewModel.speakRow(row) }
+                    )
+                    actions.forEach { (label, action) ->
+                        Text(
+                            text = label,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showRowMenu = null
+                                    action()
+                                }
+                                .padding(16.dp),
+                            color = GreenPrimary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showRowMenu = null }) { Text("Close") }
+            }
+        )
+    }
+
+    // Unified Color Picker Dialog (Background & Text with Preset & Custom Options)
+    colorPickerState?.let { state ->
+        UnifiedColorPickerDialog(
+            state = state,
+            engine = engine,
+            onSetBgColor = { color ->
+                when (val target = state.target) {
+                    is ColorTarget.Cell -> viewModel.setCellColor(target.r, target.c, color)
+                    is ColorTarget.Column -> viewModel.setColumnColor(target.c, color)
+                    is ColorTarget.Row -> viewModel.setRowColor(target.r, color)
+                }
+            },
+            onSetTextColor = { color ->
+                when (val target = state.target) {
+                    is ColorTarget.Cell -> viewModel.setCellTextColor(target.r, target.c, color)
+                    is ColorTarget.Column -> viewModel.setColumnTextColor(target.c, color)
+                    is ColorTarget.Row -> viewModel.setRowTextColor(target.r, color)
+                }
+            },
+            onDismiss = { colorPickerState = null }
+        )
+    }
+
+    if (showSaveConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveConfirmDialog = false },
+            title = { Text("Update File") },
+            text = { Text("Do you want to update the file?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSaveConfirmDialog = false
+                        viewModel.saveDocument()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("confirm_save_yes_button")
+                ) {
+                    Text("Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showSaveConfirmDialog = false },
+                    modifier = Modifier.testTag("confirm_save_cancel_button")
+                ) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -1554,4 +2160,448 @@ fun SpreadsheetScreen(
             }
         )
     }
+}
+
+data class ColorSwatch(val name: String, val colorInt: Int)
+
+val presetBgSwatches = listOf(
+    ColorSwatch("Soft Red", 0xFFFFCDD2.toInt()),
+    ColorSwatch("Coral", 0xFFFFAB91.toInt()),
+    ColorSwatch("Peach", 0xFFFFE0B2.toInt()),
+    ColorSwatch("Warm Yellow", 0xFFFFF59D.toInt()),
+    ColorSwatch("Mint Green", 0xFFC8E6C9.toInt()),
+    ColorSwatch("Teal", 0xFFB2DFDB.toInt()),
+    ColorSwatch("Sky Blue", 0xFFBBDEFB.toInt()),
+    ColorSwatch("Indigo", 0xFFC5CAE9.toInt()),
+    ColorSwatch("Lavender", 0xFFE1BEE7.toInt()),
+    ColorSwatch("Rose", 0xFFF8BBD0.toInt()),
+    ColorSwatch("Slate Grey", 0xFFCFD8DC.toInt()),
+    ColorSwatch("Dark Forest", 0xFF2D5A27.toInt()),
+    ColorSwatch("Navy Blue", 0xFF1A237E.toInt()),
+    ColorSwatch("Charcoal", 0xFF263238.toInt()),
+    ColorSwatch("Gold", 0xFFFFD54F.toInt()),
+    ColorSwatch("Pure White", 0xFFFFFFFF.toInt())
+)
+
+val presetTextSwatches = listOf(
+    ColorSwatch("Pure Black", 0xFF000000.toInt()),
+    ColorSwatch("Dark Charcoal", 0xFF212121.toInt()),
+    ColorSwatch("Pure White", 0xFFFFFFFF.toInt()),
+    ColorSwatch("Crimson", 0xFFD32F2F.toInt()),
+    ColorSwatch("Deep Orange", 0xFFE64A19.toInt()),
+    ColorSwatch("Forest Green", 0xFF2E7D32.toInt()),
+    ColorSwatch("Emerald", 0xFF00897B.toInt()),
+    ColorSwatch("Royal Blue", 0xFF1976D2.toInt()),
+    ColorSwatch("Navy", 0xFF0D47A1.toInt()),
+    ColorSwatch("Purple", 0xFF7B1FA2.toInt()),
+    ColorSwatch("Hot Pink", 0xFFC2185B.toInt()),
+    ColorSwatch("Slate Grey", 0xFF455A64.toInt()),
+    ColorSwatch("Gold Amber", 0xFFFFA000.toInt()),
+    ColorSwatch("Brown", 0xFF5D4037.toInt()),
+    ColorSwatch("Cyan", 0xFF0097A7.toInt()),
+    ColorSwatch("Lime Green", 0xFF689F38.toInt())
+)
+
+@Composable
+fun UnifiedColorPickerDialog(
+    state: ColorPickerState,
+    engine: com.speaksheet.utils.SpreadsheetEngine,
+    onSetBgColor: (Int?) -> Unit,
+    onSetTextColor: (Int?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var activeTab by remember { mutableStateOf(state.initialTab) }
+    var showCustomControls by remember { mutableStateOf(false) }
+
+    val currentBgColor = when (val target = state.target) {
+        is ColorTarget.Cell -> engine.getCellColor(target.r, target.c)
+        is ColorTarget.Column -> engine.getColumnColor(target.c)
+        is ColorTarget.Row -> engine.getRowColor(target.r)
+    }
+
+    val currentTextColor = when (val target = state.target) {
+        is ColorTarget.Cell -> engine.getCellTextColor(target.r, target.c)
+        is ColorTarget.Column -> engine.getColumnTextColor(target.c)
+        is ColorTarget.Row -> engine.getRowTextColor(target.r)
+    }
+
+    val activeColor = if (activeTab == ColorPickerTab.BACKGROUND) currentBgColor else currentTextColor
+
+    // Custom RGB sliders state
+    var redVal by remember(activeTab, activeColor) {
+        mutableFloatStateOf(
+            if (activeColor != null) ((activeColor shr 16) and 0xFF).toFloat() else if (activeTab == ColorPickerTab.BACKGROUND) 200f else 30f
+        )
+    }
+    var greenVal by remember(activeTab, activeColor) {
+        mutableFloatStateOf(
+            if (activeColor != null) ((activeColor shr 8) and 0xFF).toFloat() else if (activeTab == ColorPickerTab.BACKGROUND) 230f else 30f
+        )
+    }
+    var blueVal by remember(activeTab, activeColor) {
+        mutableFloatStateOf(
+            if (activeColor != null) (activeColor and 0xFF).toFloat() else if (activeTab == ColorPickerTab.BACKGROUND) 200f else 30f
+        )
+    }
+
+    val customColorInt = remember(redVal, greenVal, blueVal) {
+        (0xFF shl 24) or (redVal.roundToInt() shl 16) or (greenVal.roundToInt() shl 8) or blueVal.roundToInt()
+    }
+
+    var hexInputText by remember(customColorInt) {
+        mutableStateOf(String.format("%06X", customColorInt and 0xFFFFFF))
+    }
+
+    val titleTarget = when (val target = state.target) {
+        is ColorTarget.Cell -> "${engine.getColumnName(target.c)}${target.r + 1}"
+        is ColorTarget.Column -> "Column ${engine.getColumnName(target.c)}"
+        is ColorTarget.Row -> "Row ${target.r + 1}"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(
+                    text = "Color Options: $titleTarget",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Background vs Text Tabs
+                TabRow(
+                    selectedTabIndex = if (activeTab == ColorPickerTab.BACKGROUND) 0 else 1,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = GreenPrimary
+                ) {
+                    Tab(
+                        selected = activeTab == ColorPickerTab.BACKGROUND,
+                        onClick = { activeTab = ColorPickerTab.BACKGROUND },
+                        text = { Text("Background", fontWeight = FontWeight.Bold) },
+                        modifier = Modifier.testTag("tab_background_color")
+                    )
+                    Tab(
+                        selected = activeTab == ColorPickerTab.TEXT,
+                        onClick = { activeTab = ColorPickerTab.TEXT },
+                        text = { Text("Text Color", fontWeight = FontWeight.Bold) },
+                        modifier = Modifier.testTag("tab_text_color")
+                    )
+                }
+
+                // Current Applied Color Status Bar
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = if (activeTab == ColorPickerTab.BACKGROUND) "Current Background:" else "Current Text Color:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (activeColor != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(Color(activeColor))
+                                        .border(1.dp, Color.Black.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = String.format("#%06X", activeColor and 0xFFFFFF),
+                                    fontSize = 12.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            } else {
+                                Text(
+                                    text = "Default",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Preset Swatches Section
+                Text(
+                    text = if (activeTab == ColorPickerTab.BACKGROUND) "Preset Background Colors:" else "Preset Text Colors:",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                val swatches = if (activeTab == ColorPickerTab.BACKGROUND) presetBgSwatches else presetTextSwatches
+
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(4),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 160.dp)
+                ) {
+                    items(swatches) { swatch ->
+                        val isSelected = activeColor == swatch.colorInt
+                        val swatchColor = Color(swatch.colorInt)
+                        val lum = 0.2126f * swatchColor.red + 0.7152f * swatchColor.green + 0.0722f * swatchColor.blue
+                        val checkTint = if (lum > 0.5f) Color.Black else Color.White
+
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(swatchColor)
+                                .border(
+                                    width = if (isSelected) 3.dp else 1.dp,
+                                    color = if (isSelected) GreenPrimary else Color.Black.copy(alpha = 0.25f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .clickable {
+                                    if (activeTab == ColorPickerTab.BACKGROUND) {
+                                        onSetBgColor(swatch.colorInt)
+                                    } else {
+                                        onSetTextColor(swatch.colorInt)
+                                    }
+                                }
+                                .testTag("color_swatch_${swatch.name.lowercase().replace(" ", "_")}"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = checkTint,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                // Custom Color Toggle / Panel
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showCustomControls = !showCustomControls }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            tint = GreenPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Custom Color (RGB & Hex)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GreenPrimary
+                        )
+                    }
+                    Icon(
+                        imageVector = if (showCustomControls) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (showCustomControls) "Collapse" else "Expand",
+                        tint = GreenPrimary
+                    )
+                }
+
+                if (showCustomControls) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Color Preview & Hex Input Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(customColorInt))
+                                    .border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .testTag("custom_color_preview")
+                            )
+
+                            OutlinedTextField(
+                                value = hexInputText,
+                                onValueChange = { input ->
+                                    val cleaned = input.filter { it.isLetterOrDigit() }.take(6).uppercase(Locale.ROOT)
+                                    hexInputText = cleaned
+                                    if (cleaned.length == 6) {
+                                        try {
+                                            val parsed = cleaned.toLong(16).toInt()
+                                            redVal = ((parsed shr 16) and 0xFF).toFloat()
+                                            greenVal = ((parsed shr 8) and 0xFF).toFloat()
+                                            blueVal = (parsed and 0xFF).toFloat()
+                                        } catch (e: Exception) {
+                                            // Ignore parsing error
+                                        }
+                                    }
+                                },
+                                label = { Text("Hex (#RRGGBB)") },
+                                prefix = { Text("#") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("custom_hex_input")
+                            )
+                        }
+
+                        // Red Slider
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Red", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFD32F2F))
+                                Text("${redVal.roundToInt()}", fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                            }
+                            Slider(
+                                value = redVal,
+                                onValueChange = {
+                                    redVal = it
+                                },
+                                valueRange = 0f..255f,
+                                modifier = Modifier.fillMaxWidth().testTag("slider_red"),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFFD32F2F),
+                                    activeTrackColor = Color(0xFFD32F2F)
+                                )
+                            )
+                        }
+
+                        // Green Slider
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Green", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF388E3C))
+                                Text("${greenVal.roundToInt()}", fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                            }
+                            Slider(
+                                value = greenVal,
+                                onValueChange = {
+                                    greenVal = it
+                                },
+                                valueRange = 0f..255f,
+                                modifier = Modifier.fillMaxWidth().testTag("slider_green"),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFF388E3C),
+                                    activeTrackColor = Color(0xFF388E3C)
+                                )
+                            )
+                        }
+
+                        // Blue Slider
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Blue", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1976D2))
+                                Text("${blueVal.roundToInt()}", fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                            }
+                            Slider(
+                                value = blueVal,
+                                onValueChange = {
+                                    blueVal = it
+                                },
+                                valueRange = 0f..255f,
+                                modifier = Modifier.fillMaxWidth().testTag("slider_blue"),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFF1976D2),
+                                    activeTrackColor = Color(0xFF1976D2)
+                                )
+                            )
+                        }
+
+                        // Apply Custom Color Button
+                        Button(
+                            onClick = {
+                                if (activeTab == ColorPickerTab.BACKGROUND) {
+                                    onSetBgColor(customColorInt)
+                                } else {
+                                    onSetTextColor(customColorInt)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("apply_custom_color_button")
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Apply Custom Color")
+                        }
+                    }
+                }
+
+                // Reset / Clear Button
+                OutlinedButton(
+                    onClick = {
+                        if (activeTab == ColorPickerTab.BACKGROUND) {
+                            onSetBgColor(null)
+                        } else {
+                            onSetTextColor(null)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("clear_color_button")
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (activeTab == ColorPickerTab.BACKGROUND) "Reset Background Color" else "Reset Text Color")
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                modifier = Modifier.testTag("dialog_color_done_button")
+            ) {
+                Text("Done")
+            }
+        }
+    )
 }

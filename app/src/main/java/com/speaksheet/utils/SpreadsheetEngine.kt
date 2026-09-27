@@ -34,13 +34,23 @@ class SpreadsheetEngine {
     private val cellRightAlignedCache = HashMap<Long, Boolean>()
     private val formulaCellKeys = HashSet<Long>()
     private val evaluatingCells = HashSet<Long>()
+    private val spillOutputs = HashMap<Long, String>()
+    private val spillSources = HashMap<Long, Long>()
 
     private var rowOffsetsPx = FloatArray(0)
     private var rowHeightsPx = FloatArray(0)
     private var colOffsetsPx = FloatArray(0)
     private var colWidthsDp = FloatArray(0)
+    private var wrapEnabled = BooleanArray(0)
+    private val cellColors = HashMap<Long, Int>()
+    private val cellTextColors = HashMap<Long, Int>()
+    private val columnColors = HashMap<Int, Int>()
+    private val columnTextColors = HashMap<Int, Int>()
+    private val rowColors = HashMap<Int, Int>()
+    private val rowTextColors = HashMap<Int, Int>()
     private var isFullLayoutDirty = true
     private val dirtyColumns = HashSet<Int>()
+    private val dirtyRows = HashSet<Int>()
 
     var currentDensity = 1f
         private set
@@ -61,36 +71,247 @@ class SpreadsheetEngine {
 
     private fun cellKey(r: Int, c: Int): Long = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
 
+    fun isWrapEnabled(col: Int): Boolean {
+        return if (col in wrapEnabled.indices) wrapEnabled[col] else false
+    }
+
+    fun setColumnWrap(col: Int, enabled: Boolean) {
+        if (col >= wrapEnabled.size) {
+            val newArr = BooleanArray(maxOf(col + 1, maxCol))
+            wrapEnabled.copyInto(newArr)
+            wrapEnabled = newArr
+        }
+        if (wrapEnabled[col] != enabled) {
+            wrapEnabled[col] = enabled
+            isFullLayoutDirty = true
+        }
+    }
+
+    fun toggleColumnWrap(col: Int): Boolean {
+        val newState = !isWrapEnabled(col)
+        setColumnWrap(col, newState)
+        return newState
+    }
+
+    fun setCellColor(r: Int, c: Int, color: Int?) {
+        val key = cellKey(r, c)
+        if (color != null) {
+            cellColors[key] = color
+        } else {
+            cellColors.remove(key)
+        }
+    }
+
+    fun getCellColor(r: Int, c: Int): Int? = cellColors[cellKey(r, c)]
+
+    fun setCellTextColor(r: Int, c: Int, color: Int?) {
+        val key = cellKey(r, c)
+        if (color != null) {
+            cellTextColors[key] = color
+        } else {
+            cellTextColors.remove(key)
+        }
+    }
+
+    fun getCellTextColor(r: Int, c: Int): Int? = cellTextColors[cellKey(r, c)]
+
+    fun setColumnColor(c: Int, color: Int?) {
+        if (color != null) {
+            columnColors[c] = color
+        } else {
+            columnColors.remove(c)
+        }
+    }
+
+    fun getColumnColor(c: Int): Int? = columnColors[c]
+
+    fun setColumnTextColor(c: Int, color: Int?) {
+        if (color != null) {
+            columnTextColors[c] = color
+        } else {
+            columnTextColors.remove(c)
+        }
+    }
+
+    fun getColumnTextColor(c: Int): Int? = columnTextColors[c]
+
+    fun setRowColor(r: Int, color: Int?) {
+        if (color != null) {
+            rowColors[r] = color
+        } else {
+            rowColors.remove(r)
+        }
+    }
+
+    fun getRowColor(r: Int): Int? = rowColors[r]
+
+    fun setRowTextColor(r: Int, color: Int?) {
+        if (color != null) {
+            rowTextColors[r] = color
+        } else {
+            rowTextColors.remove(r)
+        }
+    }
+
+    fun getRowTextColor(r: Int): Int? = rowTextColors[r]
+
+    fun serializeColors(): String {
+        val sb = StringBuilder()
+        sb.append("[CELL_COLORS]\n")
+        for ((key, color) in cellColors) {
+            val r = (key ushr 32).toInt()
+            val c = (key and 0xFFFFFFFFL).toInt()
+            sb.append("$r,$c,$color\n")
+        }
+        sb.append("[CELL_TEXT_COLORS]\n")
+        for ((key, color) in cellTextColors) {
+            val r = (key ushr 32).toInt()
+            val c = (key and 0xFFFFFFFFL).toInt()
+            sb.append("$r,$c,$color\n")
+        }
+        sb.append("[COLUMN_COLORS]\n")
+        for ((c, color) in columnColors) {
+            sb.append("$c,$color\n")
+        }
+        sb.append("[COLUMN_TEXT_COLORS]\n")
+        for ((c, color) in columnTextColors) {
+            sb.append("$c,$color\n")
+        }
+        sb.append("[ROW_COLORS]\n")
+        for ((r, color) in rowColors) {
+            sb.append("$r,$color\n")
+        }
+        sb.append("[ROW_TEXT_COLORS]\n")
+        for ((r, color) in rowTextColors) {
+            sb.append("$r,$color\n")
+        }
+        return sb.toString()
+    }
+
+    fun deserializeColors(content: String) {
+        cellColors.clear()
+        cellTextColors.clear()
+        columnColors.clear()
+        columnTextColors.clear()
+        rowColors.clear()
+        rowTextColors.clear()
+        var section = ""
+        for (rawLine in content.lines()) {
+            val line = rawLine.trim()
+            if (line.isEmpty() || line.startsWith("#")) continue
+            if (line.startsWith("[") && line.endsWith("]")) {
+                section = line.uppercase(Locale.ROOT)
+                continue
+            }
+            val parts = line.split(",")
+            if (section == "[CELL_COLORS]" && parts.size >= 3) {
+                val r = parts[0].trim().toIntOrNull()
+                val c = parts[1].trim().toIntOrNull()
+                val color = parts[2].trim().toIntOrNull()
+                if (r != null && c != null && color != null) {
+                    cellColors[cellKey(r, c)] = color
+                }
+            } else if (section == "[CELL_TEXT_COLORS]" && parts.size >= 3) {
+                val r = parts[0].trim().toIntOrNull()
+                val c = parts[1].trim().toIntOrNull()
+                val color = parts[2].trim().toIntOrNull()
+                if (r != null && c != null && color != null) {
+                    cellTextColors[cellKey(r, c)] = color
+                }
+            } else if (section == "[COLUMN_COLORS]" && parts.size >= 2) {
+                val c = parts[0].trim().toIntOrNull()
+                val color = parts[1].trim().toIntOrNull()
+                if (c != null && color != null) {
+                    columnColors[c] = color
+                }
+            } else if (section == "[COLUMN_TEXT_COLORS]" && parts.size >= 2) {
+                val c = parts[0].trim().toIntOrNull()
+                val color = parts[1].trim().toIntOrNull()
+                if (c != null && color != null) {
+                    columnTextColors[c] = color
+                }
+            } else if (section == "[ROW_COLORS]" && parts.size >= 2) {
+                val r = parts[0].trim().toIntOrNull()
+                val color = parts[1].trim().toIntOrNull()
+                if (r != null && color != null) {
+                    rowColors[r] = color
+                }
+            } else if (section == "[ROW_TEXT_COLORS]" && parts.size >= 2) {
+                val r = parts[0].trim().toIntOrNull()
+                val color = parts[1].trim().toIntOrNull()
+                if (r != null && color != null) {
+                    rowTextColors[r] = color
+                }
+            }
+        }
+    }
+
     fun clearCellCaches() {
         cellRightAlignedCache.clear()
         for (fKey in formulaCellKeys) {
             cells[fKey]?.evaluated = null
         }
+        spillOutputs.clear()
+        spillSources.clear()
         dirtyColumns.clear()
+        dirtyRows.clear()
+    }
+
+    fun isSpilledCell(r: Int, c: Int): Boolean = spillOutputs.containsKey(cellKey(r, c))
+
+    fun getSpillSource(r: Int, c: Int): Pair<Int, Int>? {
+        val sKey = spillSources[cellKey(r, c)] ?: return null
+        return Pair((sKey ushr 32).toInt(), (sKey and 0xFFFFFFFFL).toInt())
     }
 
     fun getCellValue(r: Int, c: Int): String {
-        val cell = cells[cellKey(r, c)] ?: return ""
-        if (!cell.raw.startsWith("=")) {
-            return cell.raw
-        }
-        cell.evaluated?.let { return it }
-
         val key = cellKey(r, c)
-        if (!evaluatingCells.add(key)) {
-            return "#CIRCULAR!"
+        val cell = cells[key]
+        if (cell != null && cell.raw.isNotEmpty()) {
+            if (!cell.raw.startsWith("=")) {
+                return cell.raw
+            }
+            cell.evaluated?.let { return it }
+
+            if (!evaluatingCells.add(key)) {
+                return "#CIRCULAR!"
+            }
+            return try {
+                val eval = evaluateFormula(cell.raw, r, c)
+                cell.evaluated = eval
+                eval
+            } finally {
+                evaluatingCells.remove(key)
+            }
         }
-        return try {
-            val eval = evaluateFormula(cell.raw)
-            cell.evaluated = eval
-            eval
-        } finally {
-            evaluatingCells.remove(key)
-        }
+        return spillOutputs[key] ?: ""
     }
 
     fun getCellFormulaOrValue(r: Int, c: Int): String {
         return cells[cellKey(r, c)]?.raw ?: ""
+    }
+
+    fun recalculateAllFormulas() {
+        spillOutputs.clear()
+        spillSources.clear()
+        for (fKey in formulaCellKeys) {
+            cells[fKey]?.evaluated = null
+            cellRightAlignedCache.remove(fKey)
+            val fCol = (fKey and 0xFFFFFFFFL).toInt()
+            val fRow = (fKey ushr 32).toInt()
+            if (fCol in 0 until maxCol) {
+                dirtyColumns.add(fCol)
+            }
+            if (isWrapEnabled(fCol) && fRow in 0 until maxRow) {
+                dirtyRows.add(fRow)
+            }
+        }
+        val keys = formulaCellKeys.toList()
+        for (fKey in keys) {
+            val r = (fKey ushr 32).toInt()
+            val c = (fKey and 0xFFFFFFFFL).toInt()
+            getCellValue(r, c)
+        }
     }
 
     fun setCell(r: Int, c: Int, value: String) {
@@ -113,20 +334,20 @@ class SpreadsheetEngine {
         if (r >= maxRow || c >= maxCol) {
             maxRow = maxOf(maxRow, r + 1)
             maxCol = maxOf(maxCol, c + 1)
+            if (wrapEnabled.size < maxCol) {
+                val newArr = BooleanArray(maxCol)
+                wrapEnabled.copyInto(newArr)
+                wrapEnabled = newArr
+            }
             isFullLayoutDirty = true
         } else {
             dirtyColumns.add(c)
-        }
-
-        // Invalidate all dependent formula cells so any formulas referencing this cell recalculate
-        for (fKey in formulaCellKeys) {
-            cells[fKey]?.evaluated = null
-            cellRightAlignedCache.remove(fKey)
-            val fCol = (fKey and 0xFFFFFFFFL).toInt()
-            if (fCol in 0 until maxCol) {
-                dirtyColumns.add(fCol)
+            if (isWrapEnabled(c)) {
+                dirtyRows.add(r)
             }
         }
+
+        recalculateAllFormulas()
     }
 
     fun isRightAligned(r: Int, c: Int): Boolean {
@@ -147,12 +368,22 @@ class SpreadsheetEngine {
 
     fun newSpreadsheet(rows: Int = 100, cols: Int = 26) {
         cells.clear()
+        cellColors.clear()
+        cellTextColors.clear()
+        columnColors.clear()
+        columnTextColors.clear()
+        rowColors.clear()
+        rowTextColors.clear()
         cellRightAlignedCache.clear()
         formulaCellKeys.clear()
         evaluatingCells.clear()
+        spillOutputs.clear()
+        spillSources.clear()
         dirtyColumns.clear()
+        dirtyRows.clear()
         maxRow = rows.coerceAtLeast(10)
         maxCol = cols.coerceAtLeast(5)
+        wrapEnabled = BooleanArray(maxCol)
         frozenRows = 0
         frozenCols = 0
         rowOffsetsPx = FloatArray(0)
@@ -164,6 +395,12 @@ class SpreadsheetEngine {
 
     fun loadSampleData(title: String, data: List<List<String>>) {
         cells.clear()
+        cellColors.clear()
+        cellTextColors.clear()
+        columnColors.clear()
+        columnTextColors.clear()
+        rowColors.clear()
+        rowTextColors.clear()
         clearCellCaches()
         var maxC = 0
         data.forEachIndexed { r, rowValues ->
@@ -176,6 +413,7 @@ class SpreadsheetEngine {
         }
         maxRow = maxOf(25, data.size + 10)
         maxCol = maxOf(10, maxC + 3)
+        wrapEnabled = BooleanArray(maxCol)
         frozenRows = 0
         frozenCols = 0
         isFullLayoutDirty = true
@@ -222,10 +460,22 @@ class SpreadsheetEngine {
                 // Graceful handling
             }
         }
+
+        if (uri.scheme == "file") {
+            try {
+                val file = File(uri.path ?: "")
+                val colorsFile = File(file.parentFile, "${file.name}.colors")
+                if (colorsFile.exists()) {
+                    deserializeColors(colorsFile.readText(Charsets.UTF_8))
+                }
+            } catch (_: Throwable) {}
+        }
     }
 
     internal fun loadCSV(inputStream: InputStream) {
         cells.clear()
+        cellColors.clear()
+        columnColors.clear()
         clearCellCaches()
         val bytes = inputStream.readBytes()
         if (bytes.isEmpty()) return
@@ -263,11 +513,14 @@ class SpreadsheetEngine {
         }
         maxRow = maxOf(30, r + 10).coerceAtMost(300)
         maxCol = maxOf(10, maxC + 4).coerceAtMost(30)
+        wrapEnabled = BooleanArray(maxCol)
         isFullLayoutDirty = true
     }
 
     private fun loadXLSX(inputStream: InputStream): Boolean {
         cells.clear()
+        cellColors.clear()
+        columnColors.clear()
         clearCellCaches()
         val sharedStrings = ArrayList<String>()
         val sheetBytes = HashMap<String, ByteArray>()
@@ -281,6 +534,8 @@ class SpreadsheetEngine {
                     parseSharedStrings(zip, sharedStrings)
                 } else if (entryName.startsWith("xl/worksheets/sheet") && entryName.endsWith(".xml")) {
                     sheetBytes[entryName] = zip.readBytes()
+                } else if (entryName == "xl/speaksheet_colors.txt") {
+                    deserializeColors(String(zip.readBytes(), Charsets.UTF_8))
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
@@ -409,6 +664,7 @@ class SpreadsheetEngine {
         }
         maxRow = maxOf(30, maxR + 10).coerceAtMost(300)
         maxCol = maxOf(10, maxC + 4).coerceAtMost(30)
+        wrapEnabled = BooleanArray(maxCol)
         isFullLayoutDirty = true
     }
 
@@ -435,6 +691,14 @@ class SpreadsheetEngine {
                 saveXLSX(out)
             }
         }
+        try {
+            val colorsFile = File(file.parentFile, "${file.name}.colors")
+            if (cellColors.isNotEmpty() || columnColors.isNotEmpty()) {
+                colorsFile.writeText(serializeColors(), Charsets.UTF_8)
+            } else if (colorsFile.exists()) {
+                colorsFile.delete()
+            }
+        } catch (_: Throwable) {}
     }
 
     suspend fun saveToUri(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
@@ -544,11 +808,17 @@ class SpreadsheetEngine {
         zip.write(sheetXml.toString().toByteArray())
         zip.closeEntry()
 
+        if (cellColors.isNotEmpty() || columnColors.isNotEmpty()) {
+            zip.putNextEntry(ZipEntry("xl/speaksheet_colors.txt"))
+            zip.write(serializeColors().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+        }
+
         zip.finish()
         zip.flush()
     }
 
-    private fun evaluateFormula(formula: String): String {
+    private fun evaluateFormula(formula: String, originR: Int = -1, originC: Int = -1): String {
         try {
             val clean = formula.trim().removePrefix("=").trim()
             val upper = clean.uppercase(Locale.ROOT)
@@ -579,6 +849,9 @@ class SpreadsheetEngine {
                 val vals = evaluateRange(rangeStr)
                 return if (vals.isNotEmpty()) formatNumber(vals.maxOrNull() ?: 0.0) else "0"
             }
+            if (upper.startsWith("SORT(") && upper.endsWith(")")) {
+                return evaluateSort(formula, clean, originR, originC)
+            }
 
             // Simple cell reference like =A1
             val refCoords = parseCellReference(upper)
@@ -589,6 +862,224 @@ class SpreadsheetEngine {
             return clean
         } catch (_: Throwable) {
             return formula
+        }
+    }
+
+    private fun evaluateSort(formula: String, clean: String, originR: Int, originC: Int): String {
+        val inner = clean.substring(5, clean.length - 1).trim()
+        val args = splitArguments(inner)
+        if (args.isEmpty()) return "#VALUE!"
+
+        val rangeStr = args[0].trim().uppercase(Locale.ROOT)
+        val parts = rangeStr.split(":")
+        if (parts.size != 2) return "#VALUE!"
+
+        val start = parseCellReference(parts[0].trim()) ?: return "#VALUE!"
+        val end = parseCellReference(parts[1].trim()) ?: return "#VALUE!"
+
+        val rMin = minOf(start.first, end.first)
+        val rMax = maxOf(start.first, end.first)
+        val cMin = minOf(start.second, end.second)
+        val cMax = maxOf(start.second, end.second)
+
+        var sortCol = 1
+        var isAscending = true
+
+        if (args.size == 2) {
+            val arg1 = args[1].trim().uppercase(Locale.ROOT).removeSurrounding("\"").removeSurrounding("'")
+            val colNum = arg1.toIntOrNull()
+            if (colNum != null) {
+                sortCol = colNum
+            } else {
+                isAscending = arg1 != "DESC" && arg1 != "-1" && arg1 != "FALSE"
+            }
+        } else if (args.size >= 3) {
+            val arg1 = args[1].trim().toIntOrNull()
+            if (arg1 != null) sortCol = arg1
+            val arg2 = args[2].trim().uppercase(Locale.ROOT).removeSurrounding("\"").removeSurrounding("'")
+            isAscending = arg2 != "DESC" && arg2 != "-1" && arg2 != "FALSE"
+        }
+
+        // Circular reference check
+        if (originR in rMin..rMax && originC in cMin..cMax) {
+            return "#CIRCULAR!"
+        }
+
+        val rowsData = ArrayList<List<String>>()
+        for (r in rMin..rMax) {
+            val row = ArrayList<String>()
+            for (c in cMin..cMax) {
+                row.add(getCellValue(r, c))
+            }
+            rowsData.add(row)
+        }
+
+        if (rowsData.isEmpty()) return ""
+
+        val numColsInRange = (cMax - cMin + 1)
+        val sortColIdx = (sortCol - 1).coerceIn(0, numColsInRange - 1)
+
+        val comparator = Comparator<List<String>> { row1, row2 ->
+            val v1 = row1.getOrElse(sortColIdx) { "" }.trim()
+            val v2 = row2.getOrElse(sortColIdx) { "" }.trim()
+
+            if (v1.isEmpty() && v2.isEmpty()) return@Comparator 0
+            if (v1.isEmpty()) return@Comparator 1
+            if (v2.isEmpty()) return@Comparator -1
+
+            val n1 = v1.removePrefix("$").removeSuffix("%").toDoubleOrNull()
+            val n2 = v2.removePrefix("$").removeSuffix("%").toDoubleOrNull()
+
+            val cmp = if (n1 != null && n2 != null) {
+                n1.compareTo(n2)
+            } else if (n1 != null) {
+                -1
+            } else if (n2 != null) {
+                1
+            } else {
+                v1.compareTo(v2, ignoreCase = true)
+            }
+            if (isAscending) cmp else -cmp
+        }
+
+        val sortedRows = rowsData.sortedWith(comparator)
+        if (sortedRows.isEmpty()) return ""
+
+        if (originR < 0 || originC < 0) {
+            return sortedRows[0].firstOrNull() ?: ""
+        }
+
+        val numRows = sortedRows.size
+        val numCols = sortedRows[0].size
+
+        // Spill collision check with non-empty non-origin cells
+        var hasCollision = false
+        for (dr in 0 until numRows) {
+            for (dc in 0 until numCols) {
+                if (dr == 0 && dc == 0) continue
+                val targetKey = cellKey(originR + dr, originC + dc)
+                val existing = cells[targetKey]
+                if (existing != null && existing.raw.isNotEmpty()) {
+                    hasCollision = true
+                    break
+                }
+            }
+            if (hasCollision) break
+        }
+
+        if (hasCollision) {
+            return "#SPILL!"
+        }
+
+        // Spill sorted outputs
+        for (dr in 0 until numRows) {
+            val row = sortedRows[dr]
+            for (dc in 0 until row.size) {
+                if (dr == 0 && dc == 0) continue
+                val targetKey = cellKey(originR + dr, originC + dc)
+                spillOutputs[targetKey] = row[dc]
+                spillSources[targetKey] = cellKey(originR, originC)
+                if (originC + dc in 0 until maxCol) {
+                    dirtyColumns.add(originC + dc)
+                }
+            }
+        }
+
+        // Expand layout bounds if spill extends beyond current grid
+        val reqR = originR + numRows
+        val reqC = originC + numCols
+        if (reqR > maxRow || reqC > maxCol) {
+            maxRow = maxOf(maxRow, reqR)
+            maxCol = maxOf(maxCol, reqC)
+            isFullLayoutDirty = true
+        }
+
+        return sortedRows[0].firstOrNull() ?: ""
+    }
+
+    private fun splitArguments(inner: String): List<String> {
+        val args = ArrayList<String>()
+        var current = StringBuilder()
+        var inQuotes = false
+        var parenDepth = 0
+        for (ch in inner) {
+            when (ch) {
+                '"' -> {
+                    inQuotes = !inQuotes
+                    current.append(ch)
+                }
+                '(' -> {
+                    if (!inQuotes) parenDepth++
+                    current.append(ch)
+                }
+                ')' -> {
+                    if (!inQuotes) parenDepth--
+                    current.append(ch)
+                }
+                ',' -> {
+                    if (!inQuotes && parenDepth == 0) {
+                        args.add(current.toString().trim())
+                        current = StringBuilder()
+                    } else {
+                        current.append(ch)
+                    }
+                }
+                else -> current.append(ch)
+            }
+        }
+        if (current.isNotEmpty()) {
+            args.add(current.toString().trim())
+        }
+        return args
+    }
+
+    fun sortColumn(col: Int, ascending: Boolean) {
+        if (col !in 0 until maxCol) return
+        val startRow = 1
+        val endRow = maxRow - 1
+        if (endRow < startRow) return
+
+        val rowsData = ArrayList<Pair<Int, List<String>>>()
+        for (r in startRow..endRow) {
+            val rowValues = (0 until maxCol).map { c -> getCellFormulaOrValue(r, c) }
+            val hasContent = (0 until maxCol).any { c -> getCellValue(r, c).isNotEmpty() }
+            if (hasContent) {
+                rowsData.add(Pair(r, rowValues))
+            }
+        }
+        if (rowsData.size <= 1) return
+
+        val comparator = Comparator<Pair<Int, List<String>>> { p1, p2 ->
+            val v1 = p1.second.getOrElse(col) { "" }.trim()
+            val v2 = p2.second.getOrElse(col) { "" }.trim()
+
+            if (v1.isEmpty() && v2.isEmpty()) return@Comparator 0
+            if (v1.isEmpty()) return@Comparator 1
+            if (v2.isEmpty()) return@Comparator -1
+
+            val n1 = v1.removePrefix("$").removeSuffix("%").toDoubleOrNull()
+            val n2 = v2.removePrefix("$").removeSuffix("%").toDoubleOrNull()
+
+            val cmp = if (n1 != null && n2 != null) {
+                n1.compareTo(n2)
+            } else if (n1 != null) {
+                -1
+            } else if (n2 != null) {
+                1
+            } else {
+                v1.compareTo(v2, ignoreCase = true)
+            }
+            if (ascending) cmp else -cmp
+        }
+
+        val sorted = rowsData.sortedWith(comparator)
+        for (i in rowsData.indices) {
+            val targetRow = startRow + i
+            val sortedRowValues = sorted[i].second
+            for (c in 0 until maxCol) {
+                val value = sortedRowValues.getOrElse(c) { "" }
+                setCell(targetRow, c, value)
+            }
         }
     }
 
@@ -624,6 +1115,9 @@ class SpreadsheetEngine {
     }
 
     fun getRowHeightDp(r: Int, largeTouch: Boolean = currentLargeTouch): Float {
+        if (r in rowHeightsPx.indices && rowHeightsPx[r] > 0f && currentDensity > 0f) {
+            return rowHeightsPx[r] / currentDensity
+        }
         return if (largeTouch) 44f else defaultRowHeightDp
     }
 
@@ -634,11 +1128,45 @@ class SpreadsheetEngine {
         return defaultColWidthDp
     }
 
-    fun updateLayoutIfNeeded(density: Float, largeTouch: Boolean = false) {
+    private fun computeRowHeightPx(
+        r: Int,
+        density: Float,
+        largeTouch: Boolean,
+        measureRowCellHeight: ((r: Int, c: Int, text: String, availableWidthPx: Float) -> Float)?
+    ): Float {
+        val baseH = (if (largeTouch) 44f else defaultRowHeightDp) * density
+        var maxH = baseH
+        for (c in 0 until maxCol) {
+            if (isWrapEnabled(c)) {
+                val text = getCellValue(r, c)
+                if (text.isNotEmpty()) {
+                    val colW = getColWidthPx(c)
+                    val h = measureRowCellHeight?.invoke(r, c, text, colW) ?: run {
+                        val approxCharsPerLine = ((colW - 10f * density) / (8.5f * density)).coerceAtLeast(1f)
+                        val lines = text.split("\n").sumOf { line ->
+                            maxOf(1, Math.ceil(line.length / approxCharsPerLine.toDouble()).toInt())
+                        }
+                        (lines * 16f * density + 10f * density).coerceAtLeast(baseH)
+                    }
+                    if (h > maxH) {
+                        maxH = h
+                    }
+                }
+            }
+        }
+        return maxH
+    }
+
+    fun updateLayoutIfNeeded(
+        density: Float,
+        largeTouch: Boolean = false,
+        measureRowCellHeight: ((r: Int, c: Int, text: String, availableWidthPx: Float) -> Float)? = null
+    ) {
         val structureOrStyleDirty = isFullLayoutDirty ||
             density != currentDensity ||
             currentLargeTouch != largeTouch ||
             rowOffsetsPx.size != maxRow ||
+            rowHeightsPx.size != maxRow ||
             colOffsetsPx.size != maxCol ||
             colWidthsDp.size != maxCol
 
@@ -650,6 +1178,11 @@ class SpreadsheetEngine {
             rowHeightsPx = FloatArray(maxRow)
             colOffsetsPx = FloatArray(maxCol)
             colWidthsDp = FloatArray(maxCol)
+            if (wrapEnabled.size < maxCol) {
+                val newArr = BooleanArray(maxCol)
+                wrapEnabled.copyInto(newArr)
+                wrapEnabled = newArr
+            }
 
             val checkLimit = minOf(maxRow, 25)
             for (c in 0 until maxCol) {
@@ -662,15 +1195,6 @@ class SpreadsheetEngine {
                 colWidthsDp[c] = calculatedW
             }
 
-            var currentY = 0f
-            for (r in 0 until maxRow) {
-                rowOffsetsPx[r] = currentY
-                val h = getRowHeightDp(r, largeTouch) * density
-                rowHeightsPx[r] = h
-                currentY += h
-            }
-            totalHeightPx = currentY
-
             var currentX = 0f
             for (c in 0 until maxCol) {
                 colOffsetsPx[c] = currentX
@@ -678,38 +1202,74 @@ class SpreadsheetEngine {
             }
             totalWidthPx = currentX
 
+            var currentY = 0f
+            for (r in 0 until maxRow) {
+                rowOffsetsPx[r] = currentY
+                val h = computeRowHeightPx(r, density, largeTouch, measureRowCellHeight)
+                rowHeightsPx[r] = h
+                currentY += h
+            }
+            totalHeightPx = currentY
+
             isFullLayoutDirty = false
             dirtyColumns.clear()
+            dirtyRows.clear()
             return
         }
 
-        if (dirtyColumns.isEmpty()) {
-            return
-        }
-
-        // Incremental column width update for dirty columns only
-        val minDirty = dirtyColumns.minOrNull() ?: 0
-        val checkLimit = minOf(maxRow, 25)
-        for (c in dirtyColumns) {
-            if (c in colWidthsDp.indices) {
-                var maxLen = 4
-                for (r in 0 until checkLimit) {
-                    val len = getCellValue(r, c).length
-                    if (len > maxLen) maxLen = len
+        var colLayoutChanged = false
+        if (dirtyColumns.isNotEmpty()) {
+            val minDirty = dirtyColumns.minOrNull() ?: 0
+            val checkLimit = minOf(maxRow, 25)
+            for (c in dirtyColumns) {
+                if (c in colWidthsDp.indices) {
+                    var maxLen = 4
+                    for (r in 0 until checkLimit) {
+                        val len = getCellValue(r, c).length
+                        if (len > maxLen) maxLen = len
+                    }
+                    val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
+                    if (colWidthsDp[c] != calculatedW) {
+                        colWidthsDp[c] = calculatedW
+                        colLayoutChanged = true
+                        if (isWrapEnabled(c)) {
+                            for (r in 0 until maxRow) {
+                                if (getCellValue(r, c).isNotEmpty()) {
+                                    dirtyRows.add(r)
+                                }
+                            }
+                        }
+                    }
                 }
-                val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
-                colWidthsDp[c] = calculatedW
+            }
+            dirtyColumns.clear()
+
+            if (colLayoutChanged) {
+                var currentX = if (minDirty in colOffsetsPx.indices) colOffsetsPx[minDirty] else 0f
+                for (c in minDirty until maxCol) {
+                    colOffsetsPx[c] = currentX
+                    currentX += getColWidthDp(c) * density
+                }
+                totalWidthPx = currentX
             }
         }
-        dirtyColumns.clear()
 
-        // Recompute colOffsetsPx starting from minDirty to maxCol
-        var currentX = if (minDirty in colOffsetsPx.indices) colOffsetsPx[minDirty] else 0f
-        for (c in minDirty until maxCol) {
-            colOffsetsPx[c] = currentX
-            currentX += getColWidthDp(c) * density
+        if (dirtyRows.isNotEmpty()) {
+            val minDirtyRow = dirtyRows.minOrNull() ?: 0
+            for (r in dirtyRows) {
+                if (r in rowHeightsPx.indices) {
+                    rowHeightsPx[r] = computeRowHeightPx(r, density, largeTouch, measureRowCellHeight)
+                }
+            }
+            dirtyRows.clear()
+
+            var currentY = if (minDirtyRow in rowOffsetsPx.indices) rowOffsetsPx[minDirtyRow] else 0f
+            for (r in minDirtyRow until maxRow) {
+                rowOffsetsPx[r] = currentY
+                currentY += rowHeightsPx[r]
+            }
+            totalHeightPx = currentY
         }
-        totalWidthPx = currentX
     }
 
     fun updateLayoutIfNeeded(density: Float, zoom: Float, largeTouch: Boolean) {
