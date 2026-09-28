@@ -61,7 +61,48 @@ object SampleSheets {
         )
     )
 
-    val ALL_SAMPLES = listOf(BUDGET, SALES, GRADEBOOK)
+    val SECTIONED_REPORT = SampleSheet(
+        id = "sectioned_report",
+        title = "Sectioned Report",
+        description = "Sectioned report template with title, description, and 4 sections of 5 rows each",
+        category = "Reports",
+        rows = listOf(
+            listOf("EXAMPLE FILE NAME"),
+            listOf("Description line 1 - introduction and overview of the sectioned report data"),
+            listOf("Description line 2 - additional context, metrics, and operational notes"),
+            listOf("Description line 3 - summary instructions and review guidelines"),
+            listOf("Item", "Category", "Status", "Score"),
+            listOf("Item 1", "Category 1", "Active", "95"),
+            listOf("Item 2", "Category 1", "Pending", "82"),
+            listOf("Item 3", "Category 2", "Active", "88"),
+            listOf("Item 4", "Category 2", "Pending", "91"),
+            listOf("Item 5", "Category 3", "Active", "78"),
+            listOf("Section 1 description - this is a full-width text area after every 5 data rows. There are no internal column dividers here."),
+            listOf("Item", "Category", "Status", "Score"),
+            listOf("Item 6", "Category 3", "Pending", "85"),
+            listOf("Item 7", "Category 4", "Active", "92"),
+            listOf("Item 8", "Category 4", "Pending", "76"),
+            listOf("Item 9", "Category 1", "Active", "89"),
+            listOf("Item 10", "Category 2", "Pending", "94"),
+            listOf("Section 2 description - this is a full-width text area after every 5 data rows. There are no internal column dividers here."),
+            listOf("Item", "Category", "Status", "Score"),
+            listOf("Item 11", "Category 2", "Active", "80"),
+            listOf("Item 12", "Category 3", "Pending", "88"),
+            listOf("Item 13", "Category 3", "Active", "93"),
+            listOf("Item 14", "Category 4", "Pending", "82"),
+            listOf("Item 15", "Category 1", "Active", "96"),
+            listOf("Section 3 description - this is a full-width text area after every 5 data rows. There are no internal column dividers here."),
+            listOf("Item", "Category", "Status", "Score"),
+            listOf("Item 16", "Category 1", "Pending", "79"),
+            listOf("Item 17", "Category 2", "Active", "90"),
+            listOf("Item 18", "Category 2", "Pending", "84"),
+            listOf("Item 19", "Category 3", "Active", "95"),
+            listOf("Item 20", "Category 4", "Pending", "88"),
+            listOf("Section 4 description - this is a full-width text area after every 5 data rows. There are no internal column dividers here.")
+        )
+    )
+
+    val ALL_SAMPLES = listOf(BUDGET, SALES, GRADEBOOK, SECTIONED_REPORT)
 
     fun getSample(id: String): SampleSheet? {
         return ALL_SAMPLES.find { it.id == id }

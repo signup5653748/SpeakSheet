@@ -393,6 +393,14 @@ class SpreadsheetEngine {
         isFullLayoutDirty = true
     }
 
+    private val titleRows = HashSet<Int>()
+    private val descriptionRows = HashSet<Int>()
+    private val bannerRows = HashSet<Int>()
+
+    fun isTitleRow(r: Int): Boolean = titleRows.contains(r) || (r == 0 && getCellValue(0, 0) == "EXAMPLE FILE NAME")
+    fun isDescriptionRow(r: Int): Boolean = descriptionRows.contains(r) || (r in 1..3 && getCellValue(r, 0).contains("Description line"))
+    fun isBannerRow(r: Int): Boolean = bannerRows.contains(r) || dividerRows.contains(r) || (getCellValue(r, 0).contains("Section "))
+
     fun loadSampleData(title: String, data: List<List<String>>) {
         cells.clear()
         cellColors.clear()
@@ -401,6 +409,11 @@ class SpreadsheetEngine {
         columnTextColors.clear()
         rowColors.clear()
         rowTextColors.clear()
+        titleRows.clear()
+        descriptionRows.clear()
+        bannerRows.clear()
+        dividerRows.clear()
+        headerRows.clear()
         clearCellCaches()
         var maxC = 0
         data.forEachIndexed { r, rowValues ->
@@ -411,7 +424,29 @@ class SpreadsheetEngine {
                 if (c > maxC) maxC = c
             }
         }
-        maxRow = maxOf(25, data.size + 10)
+        if (title.contains("Sectioned Report", ignoreCase = true) || (data.isNotEmpty() && data[0].getOrNull(0) == "EXAMPLE FILE NAME")) {
+            titleRows.add(0)
+            descriptionRows.add(1)
+            descriptionRows.add(2)
+            descriptionRows.add(3)
+            headerRows.add(4)
+            headerRows.add(11)
+            headerRows.add(18)
+            headerRows.add(25)
+            dividerRows.add(10)
+            dividerRows.add(17)
+            dividerRows.add(24)
+            dividerRows.add(31)
+            bannerRows.add(10)
+            bannerRows.add(17)
+            bannerRows.add(24)
+            bannerRows.add(31)
+            setRowColor(10, 0xFFFFF176.toInt()) // Yellow
+            setRowColor(17, 0xFF90CAF9.toInt()) // Blue
+            setRowColor(24, 0xFFA5D6A7.toInt()) // Green
+            setRowColor(31, 0xFFFFCC80.toInt()) // Orange
+        }
+        maxRow = maxOf(35, data.size + 10)
         maxCol = maxOf(10, maxC + 3)
         wrapEnabled = BooleanArray(maxCol)
         frozenRows = 0
@@ -1418,6 +1453,80 @@ class SpreadsheetEngine {
         } else {
             "Column ${getColumnName(col)}"
         }
+    }
+
+    private val dividerRows = HashSet<Int>()
+    private val headerRows = HashSet<Int>()
+    private var headerColor: Int? = null
+
+    fun isDividerRow(r: Int): Boolean = dividerRows.contains(r)
+    fun isHeaderRow(r: Int): Boolean = headerRows.contains(r) || r == 0
+
+    fun insertRow(r: Int) {
+        if (r < 0 || r >= maxRow) return
+        for (row in maxRow - 1 downTo r) {
+            for (c in 0 until maxCol) {
+                val oldKey = cellKey(row, c)
+                val newKey = cellKey(row + 1, c)
+                cells[oldKey]?.let { cells[newKey] = it; cells.remove(oldKey) }
+                cellColors[oldKey]?.let { cellColors[newKey] = it; cellColors.remove(oldKey) }
+                cellTextColors[oldKey]?.let { cellTextColors[newKey] = it; cellTextColors.remove(oldKey) }
+            }
+            if (rowColors.containsKey(row)) {
+                rowColors[row + 1] = rowColors[row]!!
+                rowColors.remove(row)
+            }
+            if (rowTextColors.containsKey(row)) {
+                rowTextColors[row + 1] = rowTextColors[row]!!
+                rowTextColors.remove(row)
+            }
+        }
+        maxRow++
+        isFullLayoutDirty = true
+    }
+
+    fun addDividersEveryNRows(n: Int = 5) {
+        val colors = listOf(0xFFFFF176.toInt(), 0xFF90CAF9.toInt(), 0xFFA5D6A7.toInt(), 0xFFFFCC80.toInt())
+        var dataCount = 0
+        var r = 1
+        while (r < maxRow) {
+            if (!isDividerRow(r) && !isHeaderRow(r)) {
+                dataCount++
+                if (dataCount % n == 0) {
+                    insertRow(r)
+                    dividerRows.add(r)
+                    val colorIdx = (dataCount / n - 1) % colors.size
+                    setRowColor(r, colors[colorIdx])
+                    setCell(r, 0, "Divider: Group ${dataCount / n}")
+                    r++
+                }
+            }
+            r++
+        }
+        isFullLayoutDirty = true
+    }
+
+    fun removeDivider(r: Int) {
+        dividerRows.remove(r)
+        rowColors.remove(r)
+        for (c in 0 until maxCol) {
+            setCell(r, c, "")
+        }
+        isFullLayoutDirty = true
+    }
+
+    fun removeAllDividers() {
+        dividerRows.clear()
+        isFullLayoutDirty = true
+    }
+
+    fun setHeaderRowColor(color: Int?) {
+        headerColor = color
+        setRowColor(0, color)
+        for (hr in headerRows) {
+            setRowColor(hr, color)
+        }
+        isFullLayoutDirty = true
     }
 
     companion object {

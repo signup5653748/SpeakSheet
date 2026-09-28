@@ -82,6 +82,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
@@ -206,6 +208,27 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
 
 enum class ColorPickerTab { BACKGROUND, TEXT }
 
+sealed class ActionMenuTarget {
+    data class Cell(val r: Int, val c: Int) : ActionMenuTarget()
+    data class Column(val c: Int) : ActionMenuTarget()
+    data class Row(val r: Int) : ActionMenuTarget()
+    data class General(val c: Int, val r: Int) : ActionMenuTarget()
+}
+
+@Composable
+fun ActionItem(text: String, onClick: () -> Unit) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+}
+
 sealed class ColorTarget {
     data class Cell(val r: Int, val c: Int) : ColorTarget()
     data class Column(val c: Int) : ColorTarget()
@@ -238,6 +261,7 @@ fun SpreadsheetScreen(
     var showZoomControlsMenu by remember { mutableStateOf(false) }
     var showColumnMenu by remember { mutableStateOf<Int?>(null) }
     var showRowMenu by remember { mutableStateOf<Int?>(null) }
+    var actionMenuTarget by remember { mutableStateOf<ActionMenuTarget?>(null) }
     var colorPickerState by remember { mutableStateOf<ColorPickerState?>(null) }
     
     val currentFileUri by viewModel.currentFileUri.collectAsStateWithLifecycle()
@@ -911,7 +935,7 @@ fun SpreadsheetScreen(
                                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Speak Cell", modifier = Modifier.size(18.dp))
                             }
                             FilledTonalIconButton(
-                                onClick = { showColumnMenu = curCol },
+                                onClick = { actionMenuTarget = ActionMenuTarget.General(curCol, curRow) },
                                 modifier = Modifier.size(38.dp).testTag("action_column_menu")
                             ) {
                                 Icon(Icons.Default.MoreVert, contentDescription = "Column Options", modifier = Modifier.size(18.dp))
@@ -1496,12 +1520,7 @@ fun SpreadsheetScreen(
                         }
 
                         val colLetter = engine.getColumnName(hc)
-                        val headerName = engine.getColumnHeaderName(hc)
-                        val displayLabel = if (headerName.isNotEmpty() && !headerName.startsWith("Column ")) {
-                            "$colLetter: $headerName"
-                        } else {
-                            colLetter
-                        }
+                        val displayLabel = colLetter
 
                         val isColSelected = selectedCell?.second == hc
                         val effectiveHeaderStyle = if (isColSelected) headerStyleSelected else headerStyleNormal
@@ -1872,153 +1891,95 @@ fun SpreadsheetScreen(
         )
     }
     
-    // Context Menu Dialog
-    showMenuForCell?.let { (r, c) ->
-        AlertDialog(
-            onDismissRequest = { showMenuForCell = null },
-            title = { Text("Cell Options: ${engine.getColumnName(c)}${r + 1}") },
-            text = {
-                Column {
-                    val wrapLabel = if (engine.isWrapEnabled(c)) "Disable text wrap in this column" else "Wrap text in this column"
-                    val actions = listOf(
-                        "Change Background Color" to {
-                            colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
-                        },
-                        "Change Text Color" to {
-                            colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
-                        },
-                        "Clear Cell Colors (Reset)" to {
-                            viewModel.setCellColor(r, c, null)
-                            viewModel.setCellTextColor(r, c, null)
-                        },
-                        "Edit Cell" to { editingCell = Pair(r, c) },
-                        "Copy Cell" to { viewModel.copyCell(context, r, c) },
-                        "Paste into Cell" to { viewModel.pasteCell(context, r, c) },
-                        "Delete Cell Content" to { viewModel.deleteCell(r, c) },
-                        "Speak Cell Content" to { viewModel.speakCell(r, c) },
-                        wrapLabel to { viewModel.toggleColumnWrap(c) },
-                        "Sort Column Ascending (A-Z)" to { viewModel.sortColumn(c, true) },
-                        "Sort Column Descending (Z-A)" to { viewModel.sortColumn(c, false) }
-                    )
-                    actions.forEach { (label, action) ->
-                        Text(
-                            text = label,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMenuForCell = null
-                                    action()
-                                }
-                                .padding(16.dp),
-                            color = GreenPrimary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showMenuForCell = null }) { Text("Close") }
-            }
-        )
-    }
-
-    // Column Header Context Menu Dialog
-    showColumnMenu?.let { col ->
-        val isWrapped = engine.isWrapEnabled(col)
-        val colLetter = engine.getColumnName(col)
-        val headerName = engine.getColumnHeaderName(col)
-        val titleText = if (headerName.isNotEmpty() && !headerName.startsWith("Column ")) {
-            "Column $colLetter: $headerName"
-        } else {
-            "Column $colLetter Options"
+    // Unified Categorized Action Menu Dialog
+    actionMenuTarget?.let { target ->
+        val (r, c) = when (target) {
+            is ActionMenuTarget.Cell -> Pair(target.r, target.c)
+            is ActionMenuTarget.Column -> Pair(selectedCell?.first ?: 0, target.c)
+            is ActionMenuTarget.Row -> Pair(target.r, selectedCell?.second ?: 0)
+            is ActionMenuTarget.General -> Pair(target.r, target.c)
         }
+        val colLetter = engine.getColumnName(c)
 
         AlertDialog(
-            onDismissRequest = { showColumnMenu = null },
-            title = { Text(titleText) },
+            onDismissRequest = { actionMenuTarget = null },
+            title = { Text("Actions ($colLetter${r + 1})") },
             text = {
-                Column {
-                    val wrapLabel = if (isWrapped) "Disable text wrap in this column" else "Wrap text in this column"
-                    val actions = listOf(
-                        "Change Column Background Color" to {
-                            colorPickerState = ColorPickerState(ColorTarget.Column(col), ColorPickerTab.BACKGROUND)
-                        },
-                        "Change Column Text Color" to {
-                            colorPickerState = ColorPickerState(ColorTarget.Column(col), ColorPickerTab.TEXT)
-                        },
-                        "Clear Column Colors (Reset)" to {
-                            viewModel.setColumnColor(col, null)
-                            viewModel.setColumnTextColor(col, null)
-                        },
-                        wrapLabel to { viewModel.toggleColumnWrap(col) },
-                        "Sort Column Ascending (A-Z)" to { viewModel.sortColumn(col, true) },
-                        "Sort Column Descending (Z-A)" to { viewModel.sortColumn(col, false) },
-                        "Speak Column Summary" to { viewModel.speakColumn(col) },
-                        "Clear Column $colLetter" to { clearColConfirm = col }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // 1. Cell controls
+                    Text(
+                        text = "Cell controls",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = GreenPrimary,
+                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
                     )
-                    actions.forEach { (label, action) ->
-                        Text(
-                            text = label,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showColumnMenu = null
-                                    action()
-                                }
-                                .padding(16.dp),
-                            color = GreenPrimary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
+                    ActionItem("Edit cell") { actionMenuTarget = null; editingCell = Pair(r, c) }
+                    ActionItem("Copy") { actionMenuTarget = null; viewModel.copyCell(context, r, c) }
+                    ActionItem("Paste") { actionMenuTarget = null; viewModel.pasteCell(context, r, c) }
+                    ActionItem("Clear cell") { actionMenuTarget = null; viewModel.deleteCell(r, c) }
+                    ActionItem("Speak cell") { actionMenuTarget = null; viewModel.speakCell(r, c) }
+                    ActionItem("Cell background color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND) }
+                    ActionItem("Cell text color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.TEXT) }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    // 2. Dividers
+                    Text(
+                        text = "Dividers",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = GreenPrimary,
+                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
+                    )
+                    ActionItem("Insert divider above this row") { actionMenuTarget = null; viewModel.insertRow(r) }
+                    ActionItem("Add dividers every N rows") { actionMenuTarget = null; viewModel.addDividersEveryNRows(5) }
+                    ActionItem("Remove divider") { actionMenuTarget = null; viewModel.removeDivider(r) }
+                    ActionItem("Remove all dividers") { actionMenuTarget = null; viewModel.removeAllDividers() }
+                    ActionItem("Set header row color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Row(0), ColorPickerTab.BACKGROUND) }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    // 3. Column controls
+                    Text(
+                        text = "Column controls ($colLetter)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = GreenPrimary,
+                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
+                    )
+                    ActionItem("Sort A-Z") { actionMenuTarget = null; viewModel.sortColumn(c, true) }
+                    ActionItem("Sort Z-A") { actionMenuTarget = null; viewModel.sortColumn(c, false) }
+                    ActionItem("Filter") { actionMenuTarget = null; }
+                    ActionItem(if (engine.isWrapEnabled(c)) "Disable text wrap" else "Wrap text") { actionMenuTarget = null; viewModel.toggleColumnWrap(c) }
+                    ActionItem("Column color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Column(c), ColorPickerTab.BACKGROUND) }
+                    ActionItem("Speak column summary") { actionMenuTarget = null; viewModel.speakColumn(c) }
+                    ActionItem("Clear column") { actionMenuTarget = null; clearColConfirm = c }
+                    ActionItem("Delete column") { actionMenuTarget = null; viewModel.clearColumn(c) }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    // 4. Row controls
+                    Text(
+                        text = "Row controls",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = GreenPrimary,
+                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
+                    )
+                    ActionItem("Row color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Row(r), ColorPickerTab.BACKGROUND) }
+                    ActionItem("Row text color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Row(r), ColorPickerTab.TEXT) }
+                    ActionItem("Speak row") { actionMenuTarget = null; viewModel.speakRow(r) }
+                    ActionItem("Clear row") { actionMenuTarget = null; clearRowConfirm = r }
+                    ActionItem("Delete row") { actionMenuTarget = null; deleteRowConfirm = r }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showColumnMenu = null }) { Text("Close") }
-            }
-        )
-    }
-
-    // Row Header Context Menu Dialog
-    showRowMenu?.let { row ->
-        val rowNum = row + 1
-        AlertDialog(
-            onDismissRequest = { showRowMenu = null },
-            title = { Text("Row $rowNum Options") },
-            text = {
-                Column {
-                    val actions = listOf(
-                        "Change Row Background Color" to {
-                            colorPickerState = ColorPickerState(ColorTarget.Row(row), ColorPickerTab.BACKGROUND)
-                        },
-                        "Change Row Text Color" to {
-                            colorPickerState = ColorPickerState(ColorTarget.Row(row), ColorPickerTab.TEXT)
-                        },
-                        "Clear Row Colors (Reset)" to {
-                            viewModel.setRowColor(row, null)
-                            viewModel.setRowTextColor(row, null)
-                        },
-                        "Speak Entire Row" to { viewModel.speakRow(row) },
-                        "Clear Row $rowNum" to { clearRowConfirm = row },
-                        "Delete Row $rowNum" to { deleteRowConfirm = row }
-                    )
-                    actions.forEach { (label, action) ->
-                        Text(
-                            text = label,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showRowMenu = null
-                                    action()
-                                }
-                                .padding(16.dp),
-                            color = GreenPrimary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showRowMenu = null }) { Text("Close") }
+                TextButton(onClick = { actionMenuTarget = null }) { Text("Close") }
             }
         )
     }

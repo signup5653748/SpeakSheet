@@ -45,7 +45,8 @@ data class AppSettings(
     val announceColumnFirst: Boolean = true,
     val showRowNumbers: Boolean = true,
     val deleteMode: DeleteMode = DeleteMode.CLEAR_CELL,
-    val voiceTypingLanguage: String = ""
+    val voiceTypingLanguage: String = "",
+    val lastActionTab: Int = 0
 )
 
 class SettingsRepository(private val context: Context) {
@@ -70,6 +71,7 @@ class SettingsRepository(private val context: Context) {
         val SHOW_ROW_NUMBERS = booleanPreferencesKey("show_row_numbers")
         val DELETE_MODE = intPreferencesKey("delete_mode")
         val VOICE_TYPING_LANG = stringPreferencesKey("voice_typing_lang")
+        val LAST_ACTION_TAB = intPreferencesKey("last_action_tab")
     }
 
     val appSettingsFlow: Flow<AppSettings> = context.dataStore.data
@@ -93,7 +95,8 @@ class SettingsRepository(private val context: Context) {
                 announceColumnFirst = preferences[PreferencesKeys.ANNOUNCE_COLUMN_FIRST] ?: true,
                 showRowNumbers = preferences[PreferencesKeys.SHOW_ROW_NUMBERS] ?: true,
                 deleteMode = DeleteMode.entries.getOrElse(preferences[PreferencesKeys.DELETE_MODE] ?: 0) { DeleteMode.CLEAR_CELL },
-                voiceTypingLanguage = preferences[PreferencesKeys.VOICE_TYPING_LANG] ?: ""
+                voiceTypingLanguage = preferences[PreferencesKeys.VOICE_TYPING_LANG] ?: "",
+                lastActionTab = preferences[PreferencesKeys.LAST_ACTION_TAB] ?: 0
             )
         }
 
@@ -118,6 +121,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_ROW_NUMBERS] = settings.showRowNumbers
             preferences[PreferencesKeys.DELETE_MODE] = settings.deleteMode.ordinal
             preferences[PreferencesKeys.VOICE_TYPING_LANG] = settings.voiceTypingLanguage
+            preferences[PreferencesKeys.LAST_ACTION_TAB] = settings.lastActionTab
         }
     }
 }

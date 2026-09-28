@@ -445,6 +445,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun insertRow(row: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.insertRow(row)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Inserted row above ${row + 1}")
+        }
+    }
+
+    fun addDividersEveryNRows(n: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.addDividersEveryNRows(n)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Added dividers every $n rows")
+        }
+    }
+
+    fun removeDivider(row: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.removeDivider(row)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Removed divider at row ${row + 1}")
+        }
+    }
+
+    fun removeAllDividers() {
+        viewModelScope.launch {
+            spreadsheetEngine.removeAllDividers()
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Removed all dividers")
+        }
+    }
+
+    fun setHeaderRowColor(color: Int?) {
+        viewModelScope.launch {
+            spreadsheetEngine.setHeaderRowColor(color)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Header row color updated")
+        }
+    }
+
     fun updateDeleteMode(mode: DeleteMode) {
         viewModelScope.launch {
             updateSettings(appSettings.value.copy(deleteMode = mode))
@@ -517,6 +562,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             ttsManager.speak("Row $rowNum is empty")
         }
+    }
+
+    fun speak(text: String) {
+        ttsManager.speak(text)
     }
 
     fun toggleAnnounceColumnFirst() {
