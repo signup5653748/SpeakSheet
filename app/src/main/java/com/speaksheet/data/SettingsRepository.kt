@@ -20,6 +20,12 @@ enum class InteractionMode {
     SINGLE_TAP_SPEAK_LONG_PRESS_MENU
 }
 
+enum class DeleteMode {
+    CLEAR_CELL,
+    CLEAR_ROW,
+    CLEAR_COLUMN
+}
+
 data class AppSettings(
     val voiceName: String = "",
     val speechRate: Float = 1.0f,
@@ -37,7 +43,9 @@ data class AppSettings(
     val defaultRows: Int = 1000,
     val defaultCols: Int = 26,
     val announceColumnFirst: Boolean = true,
-    val showRowNumbers: Boolean = true
+    val showRowNumbers: Boolean = true,
+    val deleteMode: DeleteMode = DeleteMode.CLEAR_CELL,
+    val voiceTypingLanguage: String = ""
 )
 
 class SettingsRepository(private val context: Context) {
@@ -60,6 +68,8 @@ class SettingsRepository(private val context: Context) {
         val DEFAULT_COLS = intPreferencesKey("default_cols")
         val ANNOUNCE_COLUMN_FIRST = booleanPreferencesKey("announce_column_first")
         val SHOW_ROW_NUMBERS = booleanPreferencesKey("show_row_numbers")
+        val DELETE_MODE = intPreferencesKey("delete_mode")
+        val VOICE_TYPING_LANG = stringPreferencesKey("voice_typing_lang")
     }
 
     val appSettingsFlow: Flow<AppSettings> = context.dataStore.data
@@ -81,7 +91,9 @@ class SettingsRepository(private val context: Context) {
                 defaultRows = preferences[PreferencesKeys.DEFAULT_ROWS] ?: 1000,
                 defaultCols = preferences[PreferencesKeys.DEFAULT_COLS] ?: 26,
                 announceColumnFirst = preferences[PreferencesKeys.ANNOUNCE_COLUMN_FIRST] ?: true,
-                showRowNumbers = preferences[PreferencesKeys.SHOW_ROW_NUMBERS] ?: true
+                showRowNumbers = preferences[PreferencesKeys.SHOW_ROW_NUMBERS] ?: true,
+                deleteMode = DeleteMode.entries.getOrElse(preferences[PreferencesKeys.DELETE_MODE] ?: 0) { DeleteMode.CLEAR_CELL },
+                voiceTypingLanguage = preferences[PreferencesKeys.VOICE_TYPING_LANG] ?: ""
             )
         }
 
@@ -104,6 +116,8 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.DEFAULT_COLS] = settings.defaultCols
             preferences[PreferencesKeys.ANNOUNCE_COLUMN_FIRST] = settings.announceColumnFirst
             preferences[PreferencesKeys.SHOW_ROW_NUMBERS] = settings.showRowNumbers
+            preferences[PreferencesKeys.DELETE_MODE] = settings.deleteMode.ordinal
+            preferences[PreferencesKeys.VOICE_TYPING_LANG] = settings.voiceTypingLanguage
         }
     }
 }

@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.speaksheet.data.AppDatabase
 import com.speaksheet.data.AppSettings
+import com.speaksheet.data.DeleteMode
 import com.speaksheet.data.InteractionMode
 import com.speaksheet.data.RecentFile
 import com.speaksheet.data.SampleSheets
@@ -411,6 +412,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val colHeader = spreadsheetEngine.getColumnHeaderName(col)
             val dir = if (ascending) "ascending" else "descending"
             ttsManager.speak("Sorted $colHeader $dir")
+        }
+    }
+
+    fun clearColumn(col: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.clearColumn(col)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            val colLetter = spreadsheetEngine.getColumnName(col)
+            ttsManager.speak("Column $colLetter cleared.")
+        }
+    }
+
+    fun clearRow(row: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.clearRow(row)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            val rowNum = row + 1
+            ttsManager.speak("Row $rowNum cleared.")
+        }
+    }
+
+    fun deleteRow(row: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.deleteRow(row)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            val rowNum = row + 1
+            ttsManager.speak("Row $rowNum deleted.")
+        }
+    }
+
+    fun updateDeleteMode(mode: DeleteMode) {
+        viewModelScope.launch {
+            updateSettings(appSettings.value.copy(deleteMode = mode))
+            val modeName = when (mode) {
+                DeleteMode.CLEAR_CELL -> "cell"
+                DeleteMode.CLEAR_ROW -> "row"
+                DeleteMode.CLEAR_COLUMN -> "column"
+            }
+            ttsManager.speak("Delete button now clears $modeName")
+        }
+    }
+
+    fun updateVoiceTypingLanguage(lang: String) {
+        viewModelScope.launch {
+            updateSettings(appSettings.value.copy(voiceTypingLanguage = lang))
+            ttsManager.speak("Voice typing language set to $lang")
+        }
+    }
+
+    fun insertVoiceText(text: String, selectedCell: Pair<Int, Int>?, editingCell: Pair<Int, Int>?, onUpdateEditingText: ((String) -> Unit)? = null) {
+        if (editingCell != null) {
+            onUpdateEditingText?.invoke(text)
+        } else if (selectedCell != null) {
+            viewModelScope.launch {
+                spreadsheetEngine.setCell(selectedCell.first, selectedCell.second, text)
+                _gridRefreshTrigger.value += 1
+                autoSaveCurrentFile()
+                if (appSettings.value.speakAfterEditing) {
+                    val colName = spreadsheetEngine.getColumnName(selectedCell.second)
+                    val rowNum = selectedCell.first + 1
+                    ttsManager.speak("$colName$rowNum: $text")
+                }
+            }
         }
     }
 

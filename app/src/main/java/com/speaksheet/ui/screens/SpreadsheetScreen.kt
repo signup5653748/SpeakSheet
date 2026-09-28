@@ -1,8 +1,18 @@
 package com.speaksheet.ui.screens
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.speech.RecognizerIntent
 import java.util.Locale
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.speaksheet.data.DeleteMode
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -39,7 +49,10 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Functions
@@ -204,7 +217,7 @@ data class ColorPickerState(
     val initialTab: ColorPickerTab = ColorPickerTab.BACKGROUND
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SpreadsheetScreen(
     viewModel: MainViewModel,
@@ -231,6 +244,23 @@ fun SpreadsheetScreen(
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
     var showSaveConfirmDialog by remember { mutableStateOf(false) }
+    var clearColConfirm by remember { mutableStateOf<Int?>(null) }
+    var clearRowConfirm by remember { mutableStateOf<Int?>(null) }
+    var deleteRowConfirm by remember { mutableStateOf<Int?>(null) }
+    var showDeleteModeChooser by remember { mutableStateOf(false) }
+    var showLanguagePicker by remember { mutableStateOf(false) }
+
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spoken = matches?.firstOrNull()
+            if (!spoken.isNullOrBlank()) {
+                viewModel.insertVoiceText(spoken, selectedCell, editingCell)
+            }
+        }
+    }
 
     // Pan offset state with smooth animation support
     val animPanOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
@@ -799,7 +829,8 @@ fun SpreadsheetScreen(
                         }
                         
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             FilledTonalIconButton(
@@ -814,11 +845,64 @@ fun SpreadsheetScreen(
                             ) {
                                 Icon(Icons.Default.ContentPaste, contentDescription = "Paste Cell", modifier = Modifier.size(18.dp))
                             }
-                            FilledTonalIconButton(
-                                onClick = { viewModel.deleteCell(curRow, curCol) },
-                                modifier = Modifier.size(38.dp).testTag("action_delete")
+                            val deleteMode = settings.deleteMode
+                            val deleteIcon = when (deleteMode) {
+                                DeleteMode.CLEAR_CELL -> Icons.Default.Delete
+                                DeleteMode.CLEAR_ROW -> Icons.Default.DeleteSweep
+                                DeleteMode.CLEAR_COLUMN -> Icons.Default.DeleteOutline
+                            }
+                            val deleteDesc = when (deleteMode) {
+                                DeleteMode.CLEAR_CELL -> "Clear Cell"
+                                DeleteMode.CLEAR_ROW -> "Clear Row"
+                                DeleteMode.CLEAR_COLUMN -> "Clear Column"
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .combinedClickable(
+                                        onClick = {
+                                            when (deleteMode) {
+                                                DeleteMode.CLEAR_CELL -> viewModel.deleteCell(curRow, curCol)
+                                                DeleteMode.CLEAR_ROW -> clearRowConfirm = curRow
+                                                DeleteMode.CLEAR_COLUMN -> clearColConfirm = curCol
+                                            }
+                                        },
+                                        onLongClick = { showDeleteModeChooser = true }
+                                    )
+                                    .testTag("action_delete")
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete Cell", modifier = Modifier.size(18.dp))
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(deleteIcon, contentDescription = deleteDesc, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .combinedClickable(
+                                        onClick = {
+                                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                                val lang = settings.voiceTypingLanguage.takeIf { it.isNotBlank() } ?: Locale.getDefault().toString()
+                                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
+                                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak into spreadsheet...")
+                                            }
+                                            try {
+                                                speechLauncher.launch(intent)
+                                            } catch (_: Exception) {
+                                                viewModel.ttsManager.speak("Voice typing not available")
+                                            }
+                                        },
+                                        onLongClick = { showLanguagePicker = true }
+                                    )
+                                    .testTag("action_mic")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Mic, contentDescription = "Voice Typing (Long press to change language)", modifier = Modifier.size(18.dp))
+                                }
                             }
                             FilledTonalIconButton(
                                 onClick = { viewModel.speakCell(curRow, curCol) },
@@ -1869,7 +1953,8 @@ fun SpreadsheetScreen(
                         wrapLabel to { viewModel.toggleColumnWrap(col) },
                         "Sort Column Ascending (A-Z)" to { viewModel.sortColumn(col, true) },
                         "Sort Column Descending (Z-A)" to { viewModel.sortColumn(col, false) },
-                        "Speak Column Summary" to { viewModel.speakColumn(col) }
+                        "Speak Column Summary" to { viewModel.speakColumn(col) },
+                        "Clear Column $colLetter" to { clearColConfirm = col }
                     )
                     actions.forEach { (label, action) ->
                         Text(
@@ -1912,7 +1997,9 @@ fun SpreadsheetScreen(
                             viewModel.setRowColor(row, null)
                             viewModel.setRowTextColor(row, null)
                         },
-                        "Speak Entire Row" to { viewModel.speakRow(row) }
+                        "Speak Entire Row" to { viewModel.speakRow(row) },
+                        "Clear Row $rowNum" to { clearRowConfirm = row },
+                        "Delete Row $rowNum" to { deleteRowConfirm = row }
                     )
                     actions.forEach { (label, action) ->
                         Text(
@@ -1983,6 +2070,177 @@ fun SpreadsheetScreen(
                 ) {
                     Text("Cancel")
                 }
+            }
+        )
+    }
+
+    clearColConfirm?.let { col ->
+        val colLetter = engine.getColumnName(col)
+        AlertDialog(
+            onDismissRequest = { clearColConfirm = null },
+            title = { Text("Clear Column $colLetter") },
+            text = { Text("Are you sure you want to clear all text in Column $colLetter?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        clearColConfirm = null
+                        viewModel.clearColumn(col)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("confirm_clear_column")
+                ) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearColConfirm = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    clearRowConfirm?.let { row ->
+        val rowNum = row + 1
+        AlertDialog(
+            onDismissRequest = { clearRowConfirm = null },
+            title = { Text("Clear Row $rowNum") },
+            text = { Text("Are you sure you want to clear all cells in Row $rowNum?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        clearRowConfirm = null
+                        viewModel.clearRow(row)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("confirm_clear_row")
+                ) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearRowConfirm = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    deleteRowConfirm?.let { row ->
+        val rowNum = row + 1
+        AlertDialog(
+            onDismissRequest = { deleteRowConfirm = null },
+            title = { Text("Delete Row $rowNum") },
+            text = { Text("Are you sure you want to delete Row $rowNum and shift rows below up?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        deleteRowConfirm = null
+                        viewModel.deleteRow(row)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("confirm_delete_row")
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteRowConfirm = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showDeleteModeChooser) {
+        AlertDialog(
+            onDismissRequest = { showDeleteModeChooser = false },
+            title = { Text("Choose Delete Action") },
+            text = {
+                Column {
+                    listOf(
+                        DeleteMode.CLEAR_CELL to "Clear cell",
+                        DeleteMode.CLEAR_ROW to "Clear row",
+                        DeleteMode.CLEAR_COLUMN to "Clear column"
+                    ).forEach { (mode, label) ->
+                        Text(
+                            text = label,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showDeleteModeChooser = false
+                                    viewModel.updateDeleteMode(mode)
+                                }
+                                .padding(16.dp),
+                            color = GreenPrimary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDeleteModeChooser = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showLanguagePicker) {
+        var searchQuery by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showLanguagePicker = false },
+            title = { Text("Voice Typing Languages") },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = { Text("Search language") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    )
+                    val allLocales = listOf(
+                        "en-US" to "English (United States)",
+                        "en-GB" to "English (United Kingdom)",
+                        "es-ES" to "Spanish (Spain)",
+                        "fr-FR" to "French (France)",
+                        "de-DE" to "German (Germany)",
+                        "it-IT" to "Italian (Italy)",
+                        "ja-JP" to "Japanese (Japan)",
+                        "ko-KR" to "Korean (South Korea)",
+                        "zh-CN" to "Chinese (Simplified)",
+                        "pt-BR" to "Portuguese (Brazil)",
+                        "ru-RU" to "Russian (Russia)",
+                        "hi-IN" to "Hindi (India)"
+                    )
+                    val filtered = allLocales.filter { it.second.contains(searchQuery, ignoreCase = true) || it.first.contains(searchQuery, ignoreCase = true) }
+                    
+                    LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                        item {
+                            Text("Downloaded (works offline)", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                        items(filtered.take(3)) { (code, name) ->
+                            Text(
+                                text = name,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showLanguagePicker = false
+                                        viewModel.updateVoiceTypingLanguage(code)
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                                fontSize = 14.sp
+                            )
+                        }
+                        item {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text("Online", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                        items(filtered.drop(3)) { (code, name) ->
+                            Text(
+                                text = name,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showLanguagePicker = false
+                                        viewModel.updateVoiceTypingLanguage(code)
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLanguagePicker = false }) { Text("Close") }
             }
         )
     }

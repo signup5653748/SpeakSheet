@@ -1033,25 +1033,41 @@ class SpreadsheetEngine {
         return args
     }
 
+    data class RowSortState(
+        val values: List<String>,
+        val rowColor: Int?,
+        val rowTextColor: Int?,
+        val cellColors: Map<Int, Int>,
+        val cellTextColors: Map<Int, Int>
+    )
+
     fun sortColumn(col: Int, ascending: Boolean) {
         if (col !in 0 until maxCol) return
         val startRow = 1
         val endRow = maxRow - 1
         if (endRow < startRow) return
 
-        val rowsData = ArrayList<Pair<Int, List<String>>>()
+        val rowsData = ArrayList<RowSortState>()
         for (r in startRow..endRow) {
             val rowValues = (0 until maxCol).map { c -> getCellFormulaOrValue(r, c) }
             val hasContent = (0 until maxCol).any { c -> getCellValue(r, c).isNotEmpty() }
             if (hasContent) {
-                rowsData.add(Pair(r, rowValues))
+                val rColor = getRowColor(r)
+                val rTextColor = getRowTextColor(r)
+                val cColors = mutableMapOf<Int, Int>()
+                val cTextColors = mutableMapOf<Int, Int>()
+                for (c in 0 until maxCol) {
+                    getCellColor(r, c)?.let { cColors[c] = it }
+                    getCellTextColor(r, c)?.let { cTextColors[c] = it }
+                }
+                rowsData.add(RowSortState(rowValues, rColor, rTextColor, cColors, cTextColors))
             }
         }
         if (rowsData.size <= 1) return
 
-        val comparator = Comparator<Pair<Int, List<String>>> { p1, p2 ->
-            val v1 = p1.second.getOrElse(col) { "" }.trim()
-            val v2 = p2.second.getOrElse(col) { "" }.trim()
+        val comparator = Comparator<RowSortState> { p1, p2 ->
+            val v1 = p1.values.getOrElse(col) { "" }.trim()
+            val v2 = p2.values.getOrElse(col) { "" }.trim()
 
             if (v1.isEmpty() && v2.isEmpty()) return@Comparator 0
             if (v1.isEmpty()) return@Comparator 1
@@ -1075,12 +1091,71 @@ class SpreadsheetEngine {
         val sorted = rowsData.sortedWith(comparator)
         for (i in rowsData.indices) {
             val targetRow = startRow + i
-            val sortedRowValues = sorted[i].second
+            val state = sorted[i]
             for (c in 0 until maxCol) {
-                val value = sortedRowValues.getOrElse(c) { "" }
-                setCell(targetRow, c, value)
+                setCell(targetRow, c, "")
+                setCellColor(targetRow, c, null)
+                setCellTextColor(targetRow, c, null)
             }
+            setRowColor(targetRow, null)
+            setRowTextColor(targetRow, null)
+
+            for (c in 0 until maxCol) {
+                val value = state.values.getOrElse(c) { "" }
+                if (value.isNotEmpty()) {
+                    setCell(targetRow, c, value)
+                }
+                state.cellColors[c]?.let { setCellColor(targetRow, c, it) }
+                state.cellTextColors[c]?.let { setCellTextColor(targetRow, c, it) }
+            }
+            setRowColor(targetRow, state.rowColor)
+            setRowTextColor(targetRow, state.rowTextColor)
         }
+        isFullLayoutDirty = true
+    }
+
+    fun clearColumn(col: Int) {
+        if (col !in 0 until maxCol) return
+        for (r in 0 until maxRow) {
+            setCell(r, col, "")
+            setCellColor(r, col, null)
+            setCellTextColor(r, col, null)
+        }
+        isFullLayoutDirty = true
+    }
+
+    fun clearRow(row: Int) {
+        if (row !in 0 until maxRow) return
+        for (c in 0 until maxCol) {
+            setCell(row, c, "")
+            setCellColor(row, c, null)
+            setCellTextColor(row, c, null)
+        }
+        setRowColor(row, null)
+        setRowTextColor(row, null)
+        isFullLayoutDirty = true
+    }
+
+    fun deleteRow(row: Int) {
+        if (row !in 0 until maxRow) return
+        for (r in row until maxRow - 1) {
+            for (c in 0 until maxCol) {
+                setCell(r, c, getCellFormulaOrValue(r + 1, c))
+                setCellColor(r, c, getCellColor(r + 1, c))
+                setCellTextColor(r, c, getCellTextColor(r + 1, c))
+            }
+            setRowColor(r, getRowColor(r + 1))
+            setRowTextColor(r, getRowTextColor(r + 1))
+        }
+        val lastRow = maxRow - 1
+        for (c in 0 until maxCol) {
+            setCell(lastRow, c, "")
+            setCellColor(lastRow, c, null)
+            setCellTextColor(lastRow, c, null)
+        }
+        setRowColor(lastRow, null)
+        setRowTextColor(lastRow, null)
+        isFullLayoutDirty = true
     }
 
     private fun evaluateRange(rangeStr: String): List<Double> {
