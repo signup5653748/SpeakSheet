@@ -1,0 +1,157 @@
+name: Apply Update File
+
+on:
+  push:
+    paths:
+      - UPDATE.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-update
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply files from UPDATE.txt
+        id: apply
+        run: |
+          python3 - <<'PY'
+          import os, sys, pathlib, datetime
+
+          SRC = "UPDATE.txt"
+          FENCE = "`" * 3
+          raw = open(SRC, encoding="utf-8").read().replace("\r\n", "\n").replace("\r", "\n")
+          lines = raw.split("\n")
+
+          def setout(k, v):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("%s=%s\n" % (k, v))
+
+          def is_marker(l):
+              return l.startswith("FILE:") or l.startswith("DELETE:")
+
+          def clean(p):
+              p = p.strip().strip("`'\"").strip().replace("\\", "/")
+              while p.startswith("./") or p.startswith("/"):
+                  p = p[2:] if p.startswith("./") else p[1:]
+              return p
+
+          def strip_fence(text_lines):
+              t = list(text_lines)
+              while t and not t[0].strip():
+                  t.pop(0)
+              while t and not t[-1].strip():
+                  t.pop()
+              if len(t) >= 2 and t[0].lstrip().startswith(FENCE) and t[-1].strip() == FENCE:
+                  t = t[1:-1]
+              return "\n".join(t)
+
+          first = next((i for i, l in enumerate(lines) if is_marker(l)), None)
+          if first is None:
+              setout("ok", "true")
+              print("No FILE: lines found. Nothing to do.")
+              sys.exit(0)
+
+          body_lines = lines[first:]
+          items = []
+          for l in body_lines:
+              if l.startswith("FILE:"):
+                  items.append(["FILE", clean(l[5:]), []])
+              elif l.startswith("DELETE:"):
+                  items.append(["DELETE", clean(l[7:]), []])
+              else:
+                  items[-1][2].append(l)
+
+          root = pathlib.Path(".").resolve()
+          errors, plan = [], []
+          for kind, path, code in items:
+              if not path:
+                  errors.append("ERROR: a file name is missing after %s:" % kind)
+                  continue
+              parts = path.split("/")
+              if ".." in parts or parts[0] == ".git" or path.startswith(".github/workflows") or path == SRC:
+                  errors.append("ERROR: not allowed: %s" % path)
+                  continue
+              target = (root / path).resolve()
+              try:
+                  target.relative_to(root)
+              except ValueError:
+                  errors.append("ERROR: bad path: %s" % path)
+                  continue
+              if kind == "FILE":
+                  content = strip_fence(code)
+                  if not content.strip():
+                      errors.append("ERROR: no code found for %s" % path)
+                      continue
+                  plan.append((kind, path, target, content))
+              else:
+                  plan.append((kind, path, target, None))
+
+          def header(result_lines):
+              stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+              return "\n".join([
+                  "PASTE AREA. Select all, delete, paste your files here, then commit.",
+                  "Format: a line starting with FILE: and the exact path, then the full code.",
+                  "To remove a file: a line starting with DELETE: and the exact path.",
+                  "Add as many files as you like. There is no size limit.",
+                  "",
+                  "LAST RESULT (%s):" % stamp,
+              ] + result_lines + ["", "-----", ""])
+
+          if errors:
+              result = ["- " + e for e in errors] + ["- Nothing was changed. Fix the problem and commit again."]
+              with open(SRC, "w", encoding="utf-8", newline="\n") as f:
+                  f.write(header(result) + "\n".join(body_lines) + "\n")
+              setout("ok", "false")
+              print("\n".join(result))
+              sys.exit(0)
+
+          result = []
+          for kind, path, target, content in plan:
+              if kind == "FILE":
+                  existed = target.exists()
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  with open(target, "w", encoding="utf-8", newline="\n") as f:
+                      f.write(content + "\n")
+                  result.append("- %s %s" % ("Updated" if existed else "Created", path))
+              else:
+                  if target.is_file():
+                      target.unlink()
+                      result.append("- Deleted %s" % path)
+                  else:
+                      result.append("- Skipped delete (not found) %s" % path)
+
+          with open(SRC, "w", encoding="utf-8", newline="\n") as f:
+              f.write(header(result))
+          setout("ok", "true")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a") as f:
+                  f.write("\n".join(result) + "\n")
+          print("\n".join(result))
+          PY
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Apply UPDATE.txt"
+          git pull --rebase
+          git push
+
+      - name: Fail if there were problems
+        if: steps.apply.outputs.ok == 'false'
+        run: |
+          echo "Problems found. Open UPDATE.txt to see LAST RESULT."
+          exit 1
