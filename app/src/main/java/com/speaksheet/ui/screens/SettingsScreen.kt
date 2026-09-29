@@ -9,6 +9,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.speaksheet.data.AppSettings
@@ -50,6 +55,47 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Image(
+                            painter = painterResource(com.speaksheet.R.drawable.canva_image),
+                            contentDescription = "App Icon & Branding",
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "App Icon & Branding",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Your uploaded image is perfectly scaled and applied as the app icon and launcher icon.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+                }
+            }
+
             item { SettingsHeader("Speech Settings") }
             
             item {
@@ -113,6 +159,7 @@ fun SettingsScreen(
 
             item { SettingsHeader("Accessibility Settings") }
             
+            item { SwitchSetting("Show gridlines", settings.showGridlines) { viewModel.updateSettings(settings.copy(showGridlines = it)) } }
             item { SwitchSetting("Show left side row numbers", settings.showRowNumbers) { viewModel.updateSettings(settings.copy(showRowNumbers = it)) } }
             item { SwitchSetting("Speak column header first (otherwise content first)", settings.announceColumnFirst) { viewModel.updateSettings(settings.copy(announceColumnFirst = it)) } }
             item { SwitchSetting("Speak row number", settings.speakRowNumber) { viewModel.updateSettings(settings.copy(speakRowNumber = it)) } }

@@ -185,6 +185,10 @@ class SpreadsheetEngine {
         for ((r, color) in rowTextColors) {
             sb.append("$r,$color\n")
         }
+        sb.append("[MERGED_RANGES]\n")
+        for (range in mergedRanges) {
+            sb.append("${range.startRow},${range.startCol},${range.endRow},${range.endCol}\n")
+        }
         return sb.toString()
     }
 
@@ -195,6 +199,7 @@ class SpreadsheetEngine {
         columnTextColors.clear()
         rowColors.clear()
         rowTextColors.clear()
+        mergedRanges.clear()
         var section = ""
         for (rawLine in content.lines()) {
             val line = rawLine.trim()
@@ -241,6 +246,19 @@ class SpreadsheetEngine {
                 val color = parts[1].trim().toIntOrNull()
                 if (r != null && color != null) {
                     rowTextColors[r] = color
+                }
+            } else if (section == "[MERGED_RANGES]" && parts.size >= 4) {
+                val sR = parts[0].trim().toIntOrNull()
+                val sC = parts[1].trim().toIntOrNull()
+                val eR = parts[2].trim().toIntOrNull()
+                val eC = parts[3].trim().toIntOrNull()
+                if (sR != null && sC != null && eR != null && eC != null) {
+                    mergedRanges.add(CellRange(sR, sC, eR, eC))
+                }
+            } else if (section == "[DIVIDER_ROWS]" && parts.size >= 1) {
+                val r = parts[0].trim().toIntOrNull()
+                if (r != null) {
+                    mergedRanges.add(CellRange(r, 0, r, maxCol - 1))
                 }
             }
         }
@@ -393,14 +411,6 @@ class SpreadsheetEngine {
         isFullLayoutDirty = true
     }
 
-    private val titleRows = HashSet<Int>()
-    private val descriptionRows = HashSet<Int>()
-    private val bannerRows = HashSet<Int>()
-
-    fun isTitleRow(r: Int): Boolean = titleRows.contains(r) || (r == 0 && getCellValue(0, 0) == "EXAMPLE FILE NAME")
-    fun isDescriptionRow(r: Int): Boolean = descriptionRows.contains(r) || (r in 1..3 && getCellValue(r, 0).contains("Description line"))
-    fun isBannerRow(r: Int): Boolean = bannerRows.contains(r) || dividerRows.contains(r) || (getCellValue(r, 0).contains("Section "))
-
     fun loadSampleData(title: String, data: List<List<String>>) {
         cells.clear()
         cellColors.clear()
@@ -409,11 +419,6 @@ class SpreadsheetEngine {
         columnTextColors.clear()
         rowColors.clear()
         rowTextColors.clear()
-        titleRows.clear()
-        descriptionRows.clear()
-        bannerRows.clear()
-        dividerRows.clear()
-        headerRows.clear()
         clearCellCaches()
         var maxC = 0
         data.forEachIndexed { r, rowValues ->
@@ -424,33 +429,23 @@ class SpreadsheetEngine {
                 if (c > maxC) maxC = c
             }
         }
-        if (title.contains("Sectioned Report", ignoreCase = true) || (data.isNotEmpty() && data[0].getOrNull(0) == "EXAMPLE FILE NAME")) {
-            titleRows.add(0)
-            descriptionRows.add(1)
-            descriptionRows.add(2)
-            descriptionRows.add(3)
-            headerRows.add(4)
-            headerRows.add(11)
-            headerRows.add(18)
-            headerRows.add(25)
-            dividerRows.add(10)
-            dividerRows.add(17)
-            dividerRows.add(24)
-            dividerRows.add(31)
-            bannerRows.add(10)
-            bannerRows.add(17)
-            bannerRows.add(24)
-            bannerRows.add(31)
-            setRowColor(10, 0xFFFFF176.toInt()) // Yellow
-            setRowColor(17, 0xFF90CAF9.toInt()) // Blue
-            setRowColor(24, 0xFFA5D6A7.toInt()) // Green
-            setRowColor(31, 0xFFFFCC80.toInt()) // Orange
-        }
-        maxRow = maxOf(35, data.size + 10)
+        maxRow = maxOf(40, data.size + 10)
         maxCol = maxOf(10, maxC + 3)
         wrapEnabled = BooleanArray(maxCol)
         frozenRows = 0
         frozenCols = 0
+
+        if (title.contains("Sectioned Report", ignoreCase = true) || data.size > 20) {
+            setColumnWrap(0, true)
+            val bannerRowsList = listOf(10, 17, 24, 31)
+            val colors = listOf(0xFFFFF9C4.toInt(), 0xFFE3F2FD.toInt(), 0xFFE8F5E9.toInt(), 0xFFFFF3E0.toInt())
+            bannerRowsList.forEachIndexed { idx, br ->
+                if (br < maxRow) {
+                    setRowColor(br, colors[idx])
+                    mergeRange(br, 0, br, maxCol - 1)
+                }
+            }
+        }
         isFullLayoutDirty = true
     }
 
@@ -887,6 +882,21 @@ class SpreadsheetEngine {
             if (upper.startsWith("SORT(") && upper.endsWith(")")) {
                 return evaluateSort(formula, clean, originR, originC)
             }
+            if (upper.startsWith("IF(") && upper.endsWith(")")) {
+                return evaluateIf(upper.substring(3, upper.length - 1))
+            }
+            if (upper.startsWith("SUMIF(") && upper.endsWith(")")) {
+                return evaluateSumIf(upper.substring(6, upper.length - 1))
+            }
+            if (upper.startsWith("COUNTIF(") && upper.endsWith(")")) {
+                return evaluateCountIf(upper.substring(8, upper.length - 1))
+            }
+            if (upper.startsWith("VLOOKUP(") && upper.endsWith(")")) {
+                return evaluateVLookup(upper.substring(8, upper.length - 1))
+            }
+            if (upper.startsWith("XLOOKUP(") && upper.endsWith(")")) {
+                return evaluateXLookup(upper.substring(8, upper.length - 1))
+            }
 
             // Simple cell reference like =A1
             val refCoords = parseCellReference(upper)
@@ -1171,28 +1181,6 @@ class SpreadsheetEngine {
         isFullLayoutDirty = true
     }
 
-    fun deleteRow(row: Int) {
-        if (row !in 0 until maxRow) return
-        for (r in row until maxRow - 1) {
-            for (c in 0 until maxCol) {
-                setCell(r, c, getCellFormulaOrValue(r + 1, c))
-                setCellColor(r, c, getCellColor(r + 1, c))
-                setCellTextColor(r, c, getCellTextColor(r + 1, c))
-            }
-            setRowColor(r, getRowColor(r + 1))
-            setRowTextColor(r, getRowTextColor(r + 1))
-        }
-        val lastRow = maxRow - 1
-        for (c in 0 until maxCol) {
-            setCell(lastRow, c, "")
-            setCellColor(lastRow, c, null)
-            setCellTextColor(lastRow, c, null)
-        }
-        setRowColor(lastRow, null)
-        setRowTextColor(lastRow, null)
-        isFullLayoutDirty = true
-    }
-
     private fun evaluateRange(rangeStr: String): List<Double> {
         val parts = rangeStr.split(":")
         if (parts.size == 2) {
@@ -1238,6 +1226,13 @@ class SpreadsheetEngine {
         return defaultColWidthDp
     }
 
+    fun isTitleRow(r: Int): Boolean = (r == 0 && getCellValue(0, 0) == "EXAMPLE FILE NAME")
+    fun isDescriptionRow(r: Int): Boolean = (r in 1..3)
+    fun isBannerRow(r: Int): Boolean = (r == 10 || r == 17 || r == 24 || r == 31 || getCellValue(r, 0).startsWith("Section "))
+    fun isHeaderRow(r: Int): Boolean = headerRows.contains(r) || r == 0 || r == 4 || r == 11 || r == 18 || r == 25 || getCellValue(r, 0).equals("Item", ignoreCase = true)
+    fun isDataRow(r: Int): Boolean = !isTitleRow(r) && !isDescriptionRow(r) && !isHeaderRow(r) && !isBannerRow(r) && r < maxRow && getCellValue(r, 0).isNotEmpty()
+    fun isFullWidthRow(r: Int): Boolean = isTitleRow(r) || isDescriptionRow(r) || isBannerRow(r)
+
     private fun computeRowHeightPx(
         r: Int,
         density: Float,
@@ -1246,20 +1241,35 @@ class SpreadsheetEngine {
     ): Float {
         val baseH = (if (largeTouch) 44f else defaultRowHeightDp) * density
         var maxH = baseH
-        for (c in 0 until maxCol) {
-            if (isWrapEnabled(c)) {
-                val text = getCellValue(r, c)
-                if (text.isNotEmpty()) {
-                    val colW = getColWidthPx(c)
-                    val h = measureRowCellHeight?.invoke(r, c, text, colW) ?: run {
-                        val approxCharsPerLine = ((colW - 10f * density) / (8.5f * density)).coerceAtLeast(1f)
-                        val lines = text.split("\n").sumOf { line ->
-                            maxOf(1, Math.ceil(line.length / approxCharsPerLine.toDouble()).toInt())
-                        }
-                        (lines * 16f * density + 10f * density).coerceAtLeast(baseH)
+        if (isFullWidthRow(r)) {
+            val text = getCellValue(r, 0)
+            if (text.isNotEmpty()) {
+                val totalW = (0 until maxCol).sumOf { getColWidthPx(it).toDouble() }.toFloat()
+                val h = measureRowCellHeight?.invoke(r, 0, text, totalW) ?: run {
+                    val approxCharsPerLine = ((totalW - 20f * density) / (8.5f * density)).coerceAtLeast(1f)
+                    val lines = text.split("\n").sumOf { line ->
+                        maxOf(1, Math.ceil(line.length / approxCharsPerLine.toDouble()).toInt())
                     }
-                    if (h > maxH) {
-                        maxH = h
+                    (lines * 18f * density + 16f * density).coerceAtLeast(baseH)
+                }
+                maxH = h.coerceAtLeast(baseH)
+            }
+        } else {
+            for (c in 0 until maxCol) {
+                if (isWrapEnabled(c)) {
+                    val text = getCellValue(r, c)
+                    if (text.isNotEmpty()) {
+                        val colW = getColWidthPx(c)
+                        val h = measureRowCellHeight?.invoke(r, c, text, colW) ?: run {
+                            val approxCharsPerLine = ((colW - 10f * density) / (8.5f * density)).coerceAtLeast(1f)
+                            val lines = text.split("\n").sumOf { line ->
+                                maxOf(1, Math.ceil(line.length / approxCharsPerLine.toDouble()).toInt())
+                            }
+                            (lines * 16f * density + 10f * density).coerceAtLeast(baseH)
+                        }
+                        if (h > maxH) {
+                            maxH = h
+                        }
                     }
                 }
             }
@@ -1455,12 +1465,67 @@ class SpreadsheetEngine {
         }
     }
 
-    private val dividerRows = HashSet<Int>()
+    data class CellRange(
+        var startRow: Int,
+        var startCol: Int,
+        var endRow: Int,
+        var endCol: Int
+    ) {
+        fun contains(r: Int, c: Int): Boolean =
+            r in startRow..endRow && c in startCol..endCol
+
+        fun isTopLeft(r: Int, c: Int): Boolean =
+            r == startRow && c == startCol
+    }
+
+    private val mergedRanges = HashSet<CellRange>()
     private val headerRows = HashSet<Int>()
     private var headerColor: Int? = null
 
-    fun isDividerRow(r: Int): Boolean = dividerRows.contains(r)
-    fun isHeaderRow(r: Int): Boolean = headerRows.contains(r) || r == 0
+    fun mergeRange(startRow: Int, startCol: Int, endRow: Int, endCol: Int) {
+        val sR = minOf(startRow, endRow)
+        val eR = maxOf(startRow, endRow)
+        val sC = minOf(startCol, endCol)
+        val eC = maxOf(startCol, endCol)
+
+        mergedRanges.removeIf { it.contains(sR, sC) || it.contains(eR, eC) || (it.startRow >= sR && it.endRow <= eR && it.startCol >= sC && it.endCol <= eC) }
+
+        // Excel behavior: keep top-left value, clear others in the range
+        for (r in sR..eR) {
+            for (c in sC..eC) {
+                if (r != sR || c != sC) {
+                    setCell(r, c, "")
+                }
+            }
+        }
+
+        mergedRanges.add(CellRange(sR, sC, eR, eC))
+        isFullLayoutDirty = true
+    }
+
+    fun unmergeAt(r: Int, c: Int) {
+        mergedRanges.removeIf { it.contains(r, c) }
+        isFullLayoutDirty = true
+    }
+
+    fun unmergeRow(r: Int) {
+        mergedRanges.removeIf { r in it.startRow..it.endRow }
+        isFullLayoutDirty = true
+    }
+
+    fun getMergedRange(r: Int, c: Int): CellRange? {
+        return mergedRanges.find { it.contains(r, c) }
+    }
+
+    fun isMergedTopLeft(r: Int, c: Int): Boolean {
+        val range = getMergedRange(r, c)
+        return range != null && range.isTopLeft(r, c)
+    }
+
+    fun isMergedPart(r: Int, c: Int): Boolean {
+        val range = getMergedRange(r, c)
+        return range != null && !range.isTopLeft(r, c)
+    }
 
     fun insertRow(r: Int) {
         if (r < 0 || r >= maxRow) return
@@ -1481,42 +1546,64 @@ class SpreadsheetEngine {
                 rowTextColors.remove(row)
             }
         }
+        for (range in mergedRanges) {
+            if (range.startRow >= r) {
+                range.startRow++
+                range.endRow++
+            } else if (range.endRow >= r) {
+                range.endRow++
+            }
+        }
         maxRow++
         isFullLayoutDirty = true
     }
 
-    fun addDividersEveryNRows(n: Int = 5) {
-        val colors = listOf(0xFFFFF176.toInt(), 0xFF90CAF9.toInt(), 0xFFA5D6A7.toInt(), 0xFFFFCC80.toInt())
-        var dataCount = 0
-        var r = 1
-        while (r < maxRow) {
-            if (!isDividerRow(r) && !isHeaderRow(r)) {
-                dataCount++
-                if (dataCount % n == 0) {
-                    insertRow(r)
-                    dividerRows.add(r)
-                    val colorIdx = (dataCount / n - 1) % colors.size
-                    setRowColor(r, colors[colorIdx])
-                    setCell(r, 0, "Divider: Group ${dataCount / n}")
-                    r++
-                }
+    fun deleteRow(r: Int) {
+        if (r < 0 || r >= maxRow) return
+        for (row in r until maxRow - 1) {
+            for (c in 0 until maxCol) {
+                val nextKey = cellKey(row + 1, c)
+                val currKey = cellKey(row, c)
+                cells.remove(currKey)
+                cellColors.remove(currKey)
+                cellTextColors.remove(currKey)
+                cells[nextKey]?.let { cells[currKey] = it; cells.remove(nextKey) }
+                cellColors[nextKey]?.let { cellColors[currKey] = it; cellColors.remove(nextKey) }
+                cellTextColors[nextKey]?.let { cellTextColors[currKey] = it; cellTextColors.remove(nextKey) }
             }
-            r++
+            if (rowColors.containsKey(row + 1)) {
+                rowColors[row] = rowColors[row + 1]!!
+            } else {
+                rowColors.remove(row)
+            }
+            if (rowTextColors.containsKey(row + 1)) {
+                rowTextColors[row] = rowTextColors[row + 1]!!
+            } else {
+                rowTextColors.remove(row)
+            }
         }
-        isFullLayoutDirty = true
-    }
-
-    fun removeDivider(r: Int) {
-        dividerRows.remove(r)
-        rowColors.remove(r)
         for (c in 0 until maxCol) {
-            setCell(r, c, "")
+            cells.remove(cellKey(maxRow - 1, c))
+            cellColors.remove(cellKey(maxRow - 1, c))
+            cellTextColors.remove(cellKey(maxRow - 1, c))
         }
-        isFullLayoutDirty = true
-    }
+        rowColors.remove(maxRow - 1)
+        rowTextColors.remove(maxRow - 1)
 
-    fun removeAllDividers() {
-        dividerRows.clear()
+        val iterator = mergedRanges.iterator()
+        while (iterator.hasNext()) {
+            val range = iterator.next()
+            if (range.startRow == r && range.endRow == r) {
+                iterator.remove()
+            } else if (range.endRow < r) {
+                // unaffected
+            } else {
+                if (range.startRow > r) range.startRow--
+                if (range.endRow >= r) range.endRow--
+            }
+        }
+
+        maxRow = (maxRow - 1).coerceAtLeast(1)
         isFullLayoutDirty = true
     }
 
@@ -1527,6 +1614,373 @@ class SpreadsheetEngine {
             setRowColor(hr, color)
         }
         isFullLayoutDirty = true
+    }
+
+    private val cellBold = HashMap<Long, Boolean>()
+    private val cellItalic = HashMap<Long, Boolean>()
+    private val cellAlign = HashMap<Long, Int>() // 0=left, 1=center, 2=right
+    private val cellNumFmt = HashMap<Long, String>() // "General", "Number", "Currency", "Percent", "Date"
+    private val cellBorders = HashMap<Long, Int>() // 0=none, 1=all, 2=outer
+
+    fun setCellBold(r: Int, c: Int, bold: Boolean) {
+        val key = cellKey(r, c)
+        if (bold) cellBold[key] = true else cellBold.remove(key)
+    }
+    fun getCellBold(r: Int, c: Int): Boolean = cellBold[cellKey(r, c)] == true
+
+    fun setCellItalic(r: Int, c: Int, italic: Boolean) {
+        val key = cellKey(r, c)
+        if (italic) cellItalic[key] = true else cellItalic.remove(key)
+    }
+    fun getCellItalic(r: Int, c: Int): Boolean = cellItalic[cellKey(r, c)] == true
+
+    fun setCellAlignment(r: Int, c: Int, align: Int) {
+        val key = cellKey(r, c)
+        if (align in 0..2) cellAlign[key] = align else cellAlign.remove(key)
+    }
+    fun getCellAlignment(r: Int, c: Int): Int = cellAlign[cellKey(r, c)] ?: 0
+
+    fun setCellNumberFormat(r: Int, c: Int, fmt: String) {
+        val key = cellKey(r, c)
+        if (fmt == "General") cellNumFmt.remove(key) else cellNumFmt[key] = fmt
+    }
+    fun getCellNumberFormat(r: Int, c: Int): String = cellNumFmt[cellKey(r, c)] ?: "General"
+
+    fun setCellBorders(r: Int, c: Int, border: Int) {
+        val key = cellKey(r, c)
+        if (border in 0..2) cellBorders[key] = border else cellBorders.remove(key)
+    }
+    fun getCellBorders(r: Int, c: Int): Int = cellBorders[cellKey(r, c)] ?: 0
+
+    data class EngineState(
+        val cells: Map<Long, CellData>,
+        val cellColors: Map<Long, Int>,
+        val cellTextColors: Map<Long, Int>,
+        val cellBold: Map<Long, Boolean>,
+        val cellItalic: Map<Long, Boolean>,
+        val cellAlign: Map<Long, Int>,
+        val cellNumFmt: Map<Long, String>,
+        val cellBorders: Map<Long, Int>,
+        val mergedRanges: Set<CellRange>,
+        val description: String
+    )
+
+    private val undoStack = ArrayDeque<EngineState>()
+    private val redoStack = ArrayDeque<EngineState>()
+
+    val canUndo: Boolean get() = undoStack.isNotEmpty()
+    val canRedo: Boolean get() = redoStack.isNotEmpty()
+
+    fun pushUndo(description: String) {
+        val cellMap = HashMap<Long, CellData>()
+        for ((k, v) in cells) {
+            cellMap[k] = CellData(v.raw, v.evaluated)
+        }
+        undoStack.addFirst(EngineState(
+            cellMap,
+            HashMap(cellColors),
+            HashMap(cellTextColors),
+            HashMap(cellBold),
+            HashMap(cellItalic),
+            HashMap(cellAlign),
+            HashMap(cellNumFmt),
+            HashMap(cellBorders),
+            HashSet(mergedRanges),
+            description
+        ))
+        if (undoStack.size > 50) {
+            undoStack.removeLast()
+        }
+        redoStack.clear()
+    }
+
+    fun undo(): String? {
+        if (undoStack.isEmpty()) return null
+        val currentState = EngineState(
+            cells.entries.associate { it.key to CellData(it.value.raw, it.value.evaluated) },
+            HashMap(cellColors),
+            HashMap(cellTextColors),
+            HashMap(cellBold),
+            HashMap(cellItalic),
+            HashMap(cellAlign),
+            HashMap(cellNumFmt),
+            HashMap(cellBorders),
+            HashSet(mergedRanges),
+            "Current State"
+        )
+        val prevState = undoStack.removeFirst()
+        redoStack.addFirst(currentState)
+
+        cells.clear()
+        for ((k, v) in prevState.cells) {
+            cells[k] = CellData(v.raw, v.evaluated)
+        }
+        cellColors.clear(); cellColors.putAll(prevState.cellColors)
+        cellTextColors.clear(); cellTextColors.putAll(prevState.cellTextColors)
+        cellBold.clear(); cellBold.putAll(prevState.cellBold)
+        cellItalic.clear(); cellItalic.putAll(prevState.cellItalic)
+        cellAlign.clear(); cellAlign.putAll(prevState.cellAlign)
+        cellNumFmt.clear(); cellNumFmt.putAll(prevState.cellNumFmt)
+        cellBorders.clear(); cellBorders.putAll(prevState.cellBorders)
+        mergedRanges.clear(); mergedRanges.addAll(prevState.mergedRanges)
+        clearCellCaches()
+        recalculateAllFormulas()
+        isFullLayoutDirty = true
+        return prevState.description
+    }
+
+    fun redo(): String? {
+        if (redoStack.isEmpty()) return null
+        val currentState = EngineState(
+            cells.entries.associate { it.key to CellData(it.value.raw, it.value.evaluated) },
+            HashMap(cellColors),
+            HashMap(cellTextColors),
+            HashMap(cellBold),
+            HashMap(cellItalic),
+            HashMap(cellAlign),
+            HashMap(cellNumFmt),
+            HashMap(cellBorders),
+            HashSet(mergedRanges),
+            "Current State"
+        )
+        val nextState = redoStack.removeFirst()
+        undoStack.addFirst(currentState)
+
+        cells.clear()
+        for ((k, v) in nextState.cells) {
+            cells[k] = CellData(v.raw, v.evaluated)
+        }
+        cellColors.clear(); cellColors.putAll(nextState.cellColors)
+        cellTextColors.clear(); cellTextColors.putAll(nextState.cellTextColors)
+        cellBold.clear(); cellBold.putAll(nextState.cellBold)
+        cellItalic.clear(); cellItalic.putAll(nextState.cellItalic)
+        cellAlign.clear(); cellAlign.putAll(nextState.cellAlign)
+        cellNumFmt.clear(); cellNumFmt.putAll(nextState.cellNumFmt)
+        cellBorders.clear(); cellBorders.putAll(nextState.cellBorders)
+        mergedRanges.clear(); mergedRanges.addAll(nextState.mergedRanges)
+        clearCellCaches()
+        recalculateAllFormulas()
+        isFullLayoutDirty = true
+        return nextState.description
+    }
+
+    fun clearHistory() {
+        undoStack.clear()
+        redoStack.clear()
+    }
+
+    fun fillDown(startR: Int, startC: Int, endR: Int, endC: Int) {
+        pushUndo("Fill down")
+        for (c in startC..endC) {
+            val sourceVal = getCellFormulaOrValue(startR, c)
+            for (r in (startR + 1)..endR) {
+                val num = sourceVal.toDoubleOrNull()
+                val adjusted = if (num != null) formatNumber(num + (r - startR)) else sourceVal
+                setCell(r, c, adjusted)
+            }
+        }
+    }
+
+    fun fillRight(startR: Int, startC: Int, endR: Int, endC: Int) {
+        pushUndo("Fill right")
+        for (r in startR..endR) {
+            val sourceVal = getCellFormulaOrValue(r, startC)
+            for (c in (startC + 1)..endC) {
+                val num = sourceVal.toDoubleOrNull()
+                val adjusted = if (num != null) formatNumber(num + (c - startC)) else sourceVal
+                setCell(r, c, adjusted)
+            }
+        }
+    }
+
+    enum class PasteMode { VALUES_ONLY, FORMATS_ONLY, FORMULAS_ONLY }
+
+    fun pasteSpecial(targetR: Int, targetC: Int, sourceR: Int, sourceC: Int, mode: PasteMode) {
+        pushUndo("Paste special")
+        val sKey = cellKey(sourceR, sourceC)
+        val tKey = cellKey(targetR, targetC)
+        when (mode) {
+            PasteMode.VALUES_ONLY -> {
+                val valStr = getCellValue(sourceR, sourceC)
+                setCell(targetR, targetC, valStr)
+            }
+            PasteMode.FORMATS_ONLY -> {
+                cellColors[sKey]?.let { cellColors[tKey] = it }
+                cellTextColors[sKey]?.let { cellTextColors[tKey] = it }
+                cellBold[sKey]?.let { cellBold[tKey] = it }
+                cellItalic[sKey]?.let { cellItalic[tKey] = it }
+                cellAlign[sKey]?.let { cellAlign[tKey] = it }
+                cellNumFmt[sKey]?.let { cellNumFmt[tKey] = it }
+                cellBorders[sKey]?.let { cellBorders[tKey] = it }
+            }
+            PasteMode.FORMULAS_ONLY -> {
+                val raw = cells[sKey]?.raw ?: ""
+                if (raw.startsWith("=")) {
+                    setCell(targetR, targetC, raw)
+                }
+            }
+        }
+    }
+
+    fun findAndReplace(find: String, replace: String, matchCase: Boolean): Int {
+        if (find.isEmpty()) return 0
+        pushUndo("Find & Replace")
+        var count = 0
+        for ((key, cell) in cells) {
+            val text = cell.raw
+            val newText = if (matchCase) {
+                text.replace(find, replace)
+            } else {
+                text.replace(find, replace, ignoreCase = true)
+            }
+            if (newText != text) {
+                cell.raw = newText
+                cell.evaluated = null
+                formulaCellKeys.remove(key)
+                if (newText.startsWith("=")) {
+                    formulaCellKeys.add(key)
+                }
+                count++
+            }
+        }
+        recalculateAllFormulas()
+        isFullLayoutDirty = true
+        return count
+    }
+
+    private fun evaluateIf(inner: String): String {
+        val args = splitArguments(inner)
+        if (args.size < 3) return "#VALUE!"
+        val cond = args[0].trim()
+        val trueVal = args[1].trim().removeSurrounding("\"")
+        val falseVal = args[2].trim().removeSurrounding("\"")
+        return if (evaluateCondition(cond)) trueVal else falseVal
+    }
+
+    private fun evaluateCondition(cond: String): Boolean {
+        val op = listOf(">=", "<=", "<>", ">", "<", "=").find { cond.contains(it) } ?: return false
+        val parts = cond.split(op, limit = 2)
+        if (parts.size != 2) return false
+        val leftStr = getValOrRaw(parts[0].trim())
+        val rightStr = parts[1].trim().removeSurrounding("\"")
+        val lNum = leftStr.toDoubleOrNull()
+        val rNum = rightStr.toDoubleOrNull()
+        return if (lNum != null && rNum != null) {
+            when (op) {
+                ">" -> lNum > rNum; "<" -> lNum < rNum; ">=" -> lNum >= rNum; "<=" -> lNum <= rNum; "=" -> lNum == rNum; "<>" -> lNum != rNum; else -> false
+            }
+        } else {
+            val cmp = leftStr.compareTo(rightStr, ignoreCase = true)
+            when (op) { "=" -> cmp == 0; "<>" -> cmp != 0; ">" -> cmp > 0; "<" -> cmp < 0; ">=" -> cmp >= 0; "<=" -> cmp <= 0; else -> false }
+        }
+    }
+
+    private fun getValOrRaw(token: String): String {
+        val coords = parseCellReference(token.uppercase(Locale.ROOT))
+        if (coords != null) return getCellValue(coords.first, coords.second)
+        return token.removeSurrounding("\"")
+    }
+
+    private fun evaluateSumIf(inner: String): String {
+        val args = splitArguments(inner)
+        if (args.size < 2) return "#VALUE!"
+        val rangeVals = evaluateRangeWithCoords(args[0].trim())
+        val criteria = args[1].trim().removeSurrounding("\"")
+        val sumVals = if (args.size >= 3) evaluateRangeWithCoords(args[2].trim()) else rangeVals
+        var sum = 0.0
+        for (i in rangeVals.indices) {
+            if (matchesCriteria(rangeVals[i].third, criteria)) {
+                sum += sumVals.getOrNull(i)?.third?.toDoubleOrNull() ?: 0.0
+            }
+        }
+        return formatNumber(sum)
+    }
+
+    private fun evaluateCountIf(inner: String): String {
+        val args = splitArguments(inner)
+        if (args.size < 2) return "#VALUE!"
+        val rangeVals = evaluateRangeWithCoords(args[0].trim())
+        val criteria = args[1].trim().removeSurrounding("\"")
+        var count = 0
+        for (item in rangeVals) {
+            if (matchesCriteria(item.third, criteria)) count++
+        }
+        return count.toString()
+    }
+
+    private fun matchesCriteria(value: String, criteria: String): Boolean {
+        val cleanCrit = criteria.trim()
+        val op = listOf(">=", "<=", "<>", ">", "<", "=").find { cleanCrit.startsWith(it) }
+        if (op != null) {
+            val targetStr = cleanCrit.removePrefix(op).trim()
+            val vNum = value.toDoubleOrNull()
+            val tNum = targetStr.toDoubleOrNull()
+            if (vNum != null && tNum != null) {
+                return when (op) {
+                    ">" -> vNum > tNum; "<" -> vNum < tNum; ">=" -> vNum >= tNum; "<=" -> vNum <= tNum; "=" -> vNum == tNum; "<>" -> vNum != tNum; else -> false
+                }
+            }
+        }
+        return value.equals(cleanCrit, ignoreCase = true)
+    }
+
+    private fun evaluateRangeWithCoords(rangeStr: String): List<Triple<Int, Int, String>> {
+        val parts = rangeStr.uppercase(Locale.ROOT).split(":")
+        if (parts.size == 2) {
+            val start = parseCellReference(parts[0].trim()) ?: return emptyList()
+            val end = parseCellReference(parts[1].trim()) ?: return emptyList()
+            val rMin = minOf(start.first, end.first)
+            val rMax = maxOf(start.first, end.first)
+            val cMin = minOf(start.second, end.second)
+            val cMax = maxOf(start.second, end.second)
+            val result = ArrayList<Triple<Int, Int, String>>()
+            for (r in rMin..rMax) {
+                for (c in cMin..cMax) {
+                    result.add(Triple(r, c, getCellValue(r, c)))
+                }
+            }
+            return result
+        }
+        return emptyList()
+    }
+
+    private fun evaluateVLookup(inner: String): String {
+        val args = splitArguments(inner)
+        if (args.size < 3) return "#VALUE!"
+        val lookupVal = getValOrRaw(args[0].trim())
+        val rangeStr = args[1].trim().uppercase(Locale.ROOT)
+        val colIndex = args[2].trim().toIntOrNull() ?: return "#VALUE!"
+        val parts = rangeStr.split(":")
+        if (parts.size != 2) return "#VALUE!"
+        val start = parseCellReference(parts[0].trim()) ?: return "#VALUE!"
+        val end = parseCellReference(parts[1].trim()) ?: return "#VALUE!"
+        val rMin = minOf(start.first, end.first)
+        val rMax = maxOf(start.first, end.first)
+        val cMin = minOf(start.second, end.second)
+        val cMax = maxOf(start.second, end.second)
+        val targetCol = cMin + colIndex - 1
+        if (targetCol > cMax) return "#REF!"
+        for (r in rMin..rMax) {
+            if (getCellValue(r, cMin).equals(lookupVal, ignoreCase = true)) {
+                return getCellValue(r, targetCol)
+            }
+        }
+        return "#N/A"
+    }
+
+    private fun evaluateXLookup(inner: String): String {
+        val args = splitArguments(inner)
+        if (args.size < 3) return "#VALUE!"
+        val lookupVal = getValOrRaw(args[0].trim())
+        val lookupRange = evaluateRangeWithCoords(args[1].trim())
+        val returnRange = evaluateRangeWithCoords(args[2].trim())
+        val notFound = args.getOrNull(3)?.trim()?.removeSurrounding("\"") ?: "#N/A"
+        for (i in lookupRange.indices) {
+            if (lookupRange[i].third.equals(lookupVal, ignoreCase = true)) {
+                return returnRange.getOrNull(i)?.third ?: notFound
+            }
+        }
+        return notFound
     }
 
     companion object {

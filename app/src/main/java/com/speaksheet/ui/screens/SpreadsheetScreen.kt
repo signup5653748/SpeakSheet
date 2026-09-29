@@ -29,6 +29,8 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -83,8 +85,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.*
+import com.speaksheet.utils.SpreadsheetEngine
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
@@ -213,6 +215,252 @@ sealed class ActionMenuTarget {
     data class Column(val c: Int) : ActionMenuTarget()
     data class Row(val r: Int) : ActionMenuTarget()
     data class General(val c: Int, val r: Int) : ActionMenuTarget()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ActionMenuBottomSheet(
+    initialTab: Int,
+    targetCell: Pair<Int, Int>,
+    engine: SpreadsheetEngine,
+    viewModel: MainViewModel,
+    onTabSelected: (Int) -> Unit,
+    onDismiss: () -> Unit,
+    onEditCell: (Pair<Int, Int>) -> Unit,
+    onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
+    onConfirmClearCol: (Int) -> Unit,
+    onConfirmClearRow: (Int) -> Unit,
+    onConfirmDeleteRow: (Int) -> Unit
+) {
+    var selectedTab by remember { mutableIntStateOf(initialTab) }
+    val tabs = listOf("Cell", "Format", "Banner", "Column", "Row")
+    val context = LocalContext.current
+    val (r, c) = targetCell
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 32.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                tabs.forEachIndexed { index, tabName ->
+                    val isSelected = (selectedTab == index)
+                    Surface(
+                        onClick = {
+                            if (selectedTab != index) {
+                                selectedTab = index
+                                onTabSelected(index)
+                                viewModel.ttsManager.speak("$tabName tab selected")
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) GreenPrimary else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .semantics {
+                                role = Role.Tab
+                                contentDescription = "$tabName tab, ${index + 1} of 5, ${if (isSelected) "selected" else "not selected"}"
+                            }
+                            .testTag("tab_${tabName.lowercase()}")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = tabName,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            val actions = when (selectedTab) {
+                0 -> listOf(
+                    Triple("Edit", Icons.Default.Edit, "edit"),
+                    Triple("Copy", Icons.Default.ContentCopy, "copy"),
+                    Triple("Paste", Icons.Default.ContentPaste, "paste"),
+                    Triple("Paste values only", Icons.Default.ContentPaste, "paste_values"),
+                    Triple("Paste formats only", Icons.Default.ContentPaste, "paste_formats"),
+                    Triple("Paste formulas only", Icons.Default.ContentPaste, "paste_formulas"),
+                    Triple("Fill down", Icons.Default.Add, "fill_down"),
+                    Triple("Fill right", Icons.Default.Add, "fill_right"),
+                    Triple("Clear cell", Icons.Default.Clear, "clear_cell"),
+                    Triple("Speak cell", Icons.AutoMirrored.Filled.VolumeUp, "speak_cell")
+                )
+                1 -> listOf(
+                    Triple(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.Edit, "toggle_bold"),
+                    Triple(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.Edit, "toggle_italic"),
+                    Triple("Align left", Icons.Default.Check, "align_left"),
+                    Triple("Align center", Icons.Default.Check, "align_center"),
+                    Triple("Align right", Icons.Default.Check, "align_right"),
+                    Triple("Format: General", Icons.Default.Check, "fmt_general"),
+                    Triple("Format: Number", Icons.Default.Check, "fmt_number"),
+                    Triple("Format: Currency", Icons.Default.Check, "fmt_currency"),
+                    Triple("Format: Percent", Icons.Default.Check, "fmt_percent"),
+                    Triple("Format: Date", Icons.Default.Check, "fmt_date"),
+                    Triple("Border: None", Icons.Default.Clear, "border_none"),
+                    Triple("Border: All", Icons.Default.Check, "border_all"),
+                    Triple("Border: Outer", Icons.Default.Check, "border_outer"),
+                    Triple(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.Edit, "wrap_text"),
+                    Triple("Cell background color", Icons.Default.Check, "cell_bg_color"),
+                    Triple("Cell text color", Icons.Default.Check, "cell_text_color")
+                )
+                2 -> listOf(
+                    Triple("Insert banner above", Icons.Default.Add, "insert_banner_above"),
+                    Triple("Insert banner below", Icons.Default.Add, "insert_banner_below"),
+                    Triple("Convert to banner", Icons.Default.Edit, "convert_to_banner"),
+                    Triple("Unmerge banner", Icons.Default.Clear, "unmerge_banner"),
+                    Triple("Banner color", Icons.Default.Check, "banner_color"),
+                    Triple("Set header row", Icons.Default.Check, "set_header_row"),
+                    Triple("Clear header row", Icons.Default.Clear, "clear_header_row"),
+                    Triple("Header row color", Icons.Default.Check, "header_row_color")
+                )
+                3 -> listOf(
+                    Triple("Sort A-Z", Icons.Default.Check, "sort_asc"),
+                    Triple("Sort Z-A", Icons.Default.Check, "sort_desc"),
+                    Triple("Filter", Icons.Default.Check, "filter"),
+                    Triple("Freeze first column", Icons.Default.Check, "freeze_first_col"),
+                    Triple("Unfreeze column", Icons.Default.Clear, "unfreeze_col"),
+                    Triple("Column color", Icons.Default.Check, "column_color"),
+                    Triple("Speak column", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
+                    Triple("Clear column", Icons.Default.Clear, "clear_column"),
+                    Triple("Delete column", Icons.Default.Delete, "delete_column")
+                )
+                else -> listOf(
+                    Triple("Insert row above", Icons.Default.Add, "insert_row_above"),
+                    Triple("Insert row below", Icons.Default.Add, "insert_row_below"),
+                    Triple("Delete row", Icons.Default.Delete, "delete_row"),
+                    Triple("Freeze top row", Icons.Default.Check, "freeze_top_row"),
+                    Triple("Freeze up to selected", Icons.Default.Check, "freeze_selected"),
+                    Triple("Unfreeze row", Icons.Default.Clear, "unfreeze_row"),
+                    Triple("Row color", Icons.Default.Check, "row_color"),
+                    Triple("Row text color", Icons.Default.Check, "row_text_color"),
+                    Triple("Speak row", Icons.AutoMirrored.Filled.VolumeUp, "speak_row"),
+                    Triple("Clear row", Icons.Default.Clear, "clear_row")
+                )
+            }
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(actions, key = { it.third }) { action ->
+                    Button(
+                        onClick = {
+                            onDismiss()
+                            when (action.third) {
+                                "edit" -> onEditCell(Pair(r, c))
+                                "copy" -> viewModel.copyCell(context, r, c)
+                                "paste" -> viewModel.pasteCell(context, r, c)
+                                "paste_values" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.VALUES_ONLY)
+                                "paste_formats" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMATS_ONLY)
+                                "paste_formulas" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMULAS_ONLY)
+                                "fill_down" -> viewModel.fillDown(r, c, minOf(r + 5, engine.maxRow - 1), c)
+                                "fill_right" -> viewModel.fillRight(r, c, r, minOf(c + 3, engine.maxCol - 1))
+                                "clear_cell" -> viewModel.deleteCell(r, c)
+                                "speak_cell" -> viewModel.speakCell(r, c)
+
+                                "toggle_bold" -> viewModel.setCellBold(r, c, !engine.getCellBold(r, c))
+                                "toggle_italic" -> viewModel.setCellItalic(r, c, !engine.getCellItalic(r, c))
+                                "align_left" -> viewModel.setCellAlignment(r, c, 0)
+                                "align_center" -> viewModel.setCellAlignment(r, c, 1)
+                                "align_right" -> viewModel.setCellAlignment(r, c, 2)
+                                "fmt_general" -> viewModel.setCellNumberFormat(r, c, "General")
+                                "fmt_number" -> viewModel.setCellNumberFormat(r, c, "Number")
+                                "fmt_currency" -> viewModel.setCellNumberFormat(r, c, "Currency")
+                                "fmt_percent" -> viewModel.setCellNumberFormat(r, c, "Percent")
+                                "fmt_date" -> viewModel.setCellNumberFormat(r, c, "Date")
+                                "border_none" -> viewModel.setCellBorders(r, c, 0)
+                                "border_all" -> viewModel.setCellBorders(r, c, 1)
+                                "border_outer" -> viewModel.setCellBorders(r, c, 2)
+                                "wrap_text" -> viewModel.toggleColumnWrap(c)
+                                "cell_bg_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
+                                "cell_text_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
+
+                                "insert_banner_above" -> viewModel.insertBannerAbove(r) { onEditCell(it) }
+                                "insert_banner_below" -> viewModel.insertBannerBelow(r) { onEditCell(it) }
+                                "convert_to_banner" -> viewModel.convertRowToBanner(r)
+                                "unmerge_banner" -> viewModel.unmergeBanner(r)
+                                "banner_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+                                "set_header_row" -> viewModel.setHeaderRow(r)
+                                "clear_header_row" -> viewModel.clearHeaderRow(r)
+                                "header_row_color" -> onOpenColorPicker(ColorTarget.Row(0), ColorPickerTab.BACKGROUND)
+
+                                "sort_asc" -> viewModel.sortColumn(c, true)
+                                "sort_desc" -> viewModel.sortColumn(c, false)
+                                "filter" -> viewModel.ttsManager.speak("Filter active")
+                                "freeze_first_col" -> viewModel.setFreezePanes(engine.frozenRows, 1)
+                                "unfreeze_col" -> viewModel.setFreezePanes(engine.frozenRows, 0)
+                                "column_color" -> onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
+                                "speak_column" -> viewModel.speakColumn(c)
+                                "clear_column" -> onConfirmClearCol(c)
+                                "delete_column" -> viewModel.clearColumn(c)
+
+                                "insert_row_above" -> viewModel.insertRowAbove(r)
+                                "insert_row_below" -> viewModel.insertRowBelow(r)
+                                "freeze_top_row" -> viewModel.setFreezePanes(1, engine.frozenCols)
+                                "freeze_selected" -> viewModel.setFreezePanes(r + 1, c + 1)
+                                "unfreeze_row" -> viewModel.setFreezePanes(0, engine.frozenCols)
+                                "row_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+                                "row_text_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.TEXT)
+                                "speak_row" -> viewModel.speakRow(r)
+                                "clear_row" -> onConfirmClearRow(r)
+                                "delete_row" -> onConfirmDeleteRow(r)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("action_${action.third}"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        contentPadding = PaddingValues(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Start
+                        ) {
+                            Icon(
+                                imageVector = action.second,
+                                contentDescription = null,
+                                tint = GreenPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = action.first,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -550,6 +798,36 @@ fun SpreadsheetScreen(
                     }
                 },
                 actions = {
+                    // Undo Button
+                    IconButton(
+                        onClick = { viewModel.undo() },
+                        enabled = engine.canUndo,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("top_bar_undo_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Undo",
+                            tint = if (engine.canUndo) GreenPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        )
+                    }
+
+                    // Redo Button
+                    IconButton(
+                        onClick = { viewModel.redo() },
+                        enabled = engine.canRedo,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("top_bar_redo_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Redo",
+                            tint = if (engine.canRedo) GreenPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        )
+                    }
+
                     // Save document button
                     IconButton(
                         onClick = { showSaveConfirmDialog = true },
@@ -1704,7 +1982,12 @@ fun SpreadsheetScreen(
                 FormulaChipItem("COUNT", "=COUNT(:)", 7, "Insert COUNT formula: count numeric values in range"),
                 FormulaChipItem("MIN", "=MIN(:)", 5, "Insert MIN formula: calculate minimum value in range"),
                 FormulaChipItem("MAX", "=MAX(:)", 5, "Insert MAX formula: calculate maximum value in range"),
-                FormulaChipItem("SORT", "=SORT(:)", 6, "Insert SORT formula: sort range values ascending or descending")
+                FormulaChipItem("SORT", "=SORT(:)", 6, "Insert SORT formula: sort range values ascending or descending"),
+                FormulaChipItem("IF", "=IF(, , )", 4, "Insert IF conditional formula"),
+                FormulaChipItem("SUMIF", "=SUMIF(, )", 7, "Insert SUMIF conditional sum formula"),
+                FormulaChipItem("COUNTIF", "=COUNTIF(, )", 9, "Insert COUNTIF conditional count formula"),
+                FormulaChipItem("VLOOKUP", "=VLOOKUP(, , )", 9, "Insert VLOOKUP value lookup formula"),
+                FormulaChipItem("XLOOKUP", "=XLOOKUP(, , )", 9, "Insert XLOOKUP advanced lookup formula")
             )
         }
 
@@ -1891,7 +2174,7 @@ fun SpreadsheetScreen(
         )
     }
     
-    // Unified Categorized Action Menu Dialog
+    // Tabbed Action Menu Bottom Sheet
     actionMenuTarget?.let { target ->
         val (r, c) = when (target) {
             is ActionMenuTarget.Cell -> Pair(target.r, target.c)
@@ -1899,88 +2182,29 @@ fun SpreadsheetScreen(
             is ActionMenuTarget.Row -> Pair(target.r, selectedCell?.second ?: 0)
             is ActionMenuTarget.General -> Pair(target.r, target.c)
         }
-        val colLetter = engine.getColumnName(c)
+        val initialTab = when (target) {
+            is ActionMenuTarget.Cell -> 0
+            is ActionMenuTarget.Column -> 2
+            is ActionMenuTarget.Row -> 3
+            is ActionMenuTarget.General -> settings.lastActionMenuTab.coerceIn(0, 3)
+        }
 
-        AlertDialog(
-            onDismissRequest = { actionMenuTarget = null },
-            title = { Text("Actions ($colLetter${r + 1})") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    // 1. Cell controls
-                    Text(
-                        text = "Cell controls",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = GreenPrimary,
-                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
-                    )
-                    ActionItem("Edit cell") { actionMenuTarget = null; editingCell = Pair(r, c) }
-                    ActionItem("Copy") { actionMenuTarget = null; viewModel.copyCell(context, r, c) }
-                    ActionItem("Paste") { actionMenuTarget = null; viewModel.pasteCell(context, r, c) }
-                    ActionItem("Clear cell") { actionMenuTarget = null; viewModel.deleteCell(r, c) }
-                    ActionItem("Speak cell") { actionMenuTarget = null; viewModel.speakCell(r, c) }
-                    ActionItem("Cell background color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND) }
-                    ActionItem("Cell text color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Cell(r, c), ColorPickerTab.TEXT) }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    // 2. Dividers
-                    Text(
-                        text = "Dividers",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = GreenPrimary,
-                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
-                    )
-                    ActionItem("Insert divider above this row") { actionMenuTarget = null; viewModel.insertRow(r) }
-                    ActionItem("Add dividers every N rows") { actionMenuTarget = null; viewModel.addDividersEveryNRows(5) }
-                    ActionItem("Remove divider") { actionMenuTarget = null; viewModel.removeDivider(r) }
-                    ActionItem("Remove all dividers") { actionMenuTarget = null; viewModel.removeAllDividers() }
-                    ActionItem("Set header row color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Row(0), ColorPickerTab.BACKGROUND) }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    // 3. Column controls
-                    Text(
-                        text = "Column controls ($colLetter)",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = GreenPrimary,
-                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
-                    )
-                    ActionItem("Sort A-Z") { actionMenuTarget = null; viewModel.sortColumn(c, true) }
-                    ActionItem("Sort Z-A") { actionMenuTarget = null; viewModel.sortColumn(c, false) }
-                    ActionItem("Filter") { actionMenuTarget = null; }
-                    ActionItem(if (engine.isWrapEnabled(c)) "Disable text wrap" else "Wrap text") { actionMenuTarget = null; viewModel.toggleColumnWrap(c) }
-                    ActionItem("Column color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Column(c), ColorPickerTab.BACKGROUND) }
-                    ActionItem("Speak column summary") { actionMenuTarget = null; viewModel.speakColumn(c) }
-                    ActionItem("Clear column") { actionMenuTarget = null; clearColConfirm = c }
-                    ActionItem("Delete column") { actionMenuTarget = null; viewModel.clearColumn(c) }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    // 4. Row controls
-                    Text(
-                        text = "Row controls",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = GreenPrimary,
-                        modifier = Modifier.semantics { heading() }.padding(vertical = 4.dp)
-                    )
-                    ActionItem("Row color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Row(r), ColorPickerTab.BACKGROUND) }
-                    ActionItem("Row text color") { actionMenuTarget = null; colorPickerState = ColorPickerState(ColorTarget.Row(r), ColorPickerTab.TEXT) }
-                    ActionItem("Speak row") { actionMenuTarget = null; viewModel.speakRow(r) }
-                    ActionItem("Clear row") { actionMenuTarget = null; clearRowConfirm = r }
-                    ActionItem("Delete row") { actionMenuTarget = null; deleteRowConfirm = r }
-                }
+        ActionMenuBottomSheet(
+            initialTab = initialTab,
+            targetCell = Pair(r, c),
+            engine = engine,
+            viewModel = viewModel,
+            onTabSelected = { tabIdx ->
+                viewModel.updateLastActionMenuTab(tabIdx)
             },
-            confirmButton = {
-                TextButton(onClick = { actionMenuTarget = null }) { Text("Close") }
-            }
+            onDismiss = { actionMenuTarget = null },
+            onEditCell = { cellPair -> editingCell = cellPair },
+            onOpenColorPicker = { colorTarget, tab ->
+                colorPickerState = ColorPickerState(colorTarget, tab)
+            },
+            onConfirmClearCol = { col -> clearColConfirm = col },
+            onConfirmClearRow = { row -> clearRowConfirm = row },
+            onConfirmDeleteRow = { row -> deleteRowConfirm = row }
         )
     }
 
@@ -2430,7 +2654,6 @@ fun UnifiedColorPickerDialog(
     onDismiss: () -> Unit
 ) {
     var activeTab by remember { mutableStateOf(state.initialTab) }
-    var showCustomControls by remember { mutableStateOf(false) }
 
     val currentBgColor = when (val target = state.target) {
         is ColorTarget.Cell -> engine.getCellColor(target.r, target.c)
@@ -2444,31 +2667,21 @@ fun UnifiedColorPickerDialog(
         is ColorTarget.Row -> engine.getRowTextColor(target.r)
     }
 
-    val activeColor = if (activeTab == ColorPickerTab.BACKGROUND) currentBgColor else currentTextColor
+    var workingBgColor by remember { mutableStateOf(currentBgColor ?: 0xFFFFFFFF.toInt()) }
+    var workingTextColor by remember { mutableStateOf(currentTextColor ?: 0xFF000000.toInt()) }
+    var brightnessMultiplier by remember { mutableFloatStateOf(1.0f) }
 
-    // Custom RGB sliders state
-    var redVal by remember(activeTab, activeColor) {
-        mutableFloatStateOf(
-            if (activeColor != null) ((activeColor shr 16) and 0xFF).toFloat() else if (activeTab == ColorPickerTab.BACKGROUND) 200f else 30f
-        )
-    }
-    var greenVal by remember(activeTab, activeColor) {
-        mutableFloatStateOf(
-            if (activeColor != null) ((activeColor shr 8) and 0xFF).toFloat() else if (activeTab == ColorPickerTab.BACKGROUND) 230f else 30f
-        )
-    }
-    var blueVal by remember(activeTab, activeColor) {
-        mutableFloatStateOf(
-            if (activeColor != null) (activeColor and 0xFF).toFloat() else if (activeTab == ColorPickerTab.BACKGROUND) 200f else 30f
-        )
-    }
+    val activeColor = if (activeTab == ColorPickerTab.BACKGROUND) workingBgColor else workingTextColor
 
-    val customColorInt = remember(redVal, greenVal, blueVal) {
-        (0xFF shl 24) or (redVal.roundToInt() shl 16) or (greenVal.roundToInt() shl 8) or blueVal.roundToInt()
-    }
+    var baseRed by remember(activeTab, activeColor) { mutableFloatStateOf(((activeColor shr 16) and 0xFF).toFloat()) }
+    var baseGreen by remember(activeTab, activeColor) { mutableFloatStateOf(((activeColor shr 8) and 0xFF).toFloat()) }
+    var baseBlue by remember(activeTab, activeColor) { mutableFloatStateOf((activeColor and 0xFF).toFloat()) }
 
-    var hexInputText by remember(customColorInt) {
-        mutableStateOf(String.format("%06X", customColorInt and 0xFFFFFF))
+    val finalColorInt = remember(baseRed, baseGreen, baseBlue, brightnessMultiplier) {
+        val r = (baseRed * brightnessMultiplier).roundToInt().coerceIn(0, 255)
+        val g = (baseGreen * brightnessMultiplier).roundToInt().coerceIn(0, 255)
+        val b = (baseBlue * brightnessMultiplier).roundToInt().coerceIn(0, 255)
+        (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     val titleTarget = when (val target = state.target) {
@@ -2480,20 +2693,18 @@ fun UnifiedColorPickerDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Column {
-                Text(
-                    text = "Color Options: $titleTarget",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            Text(
+                text = "Color Options: $titleTarget",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Background vs Text Tabs
                 TabRow(
@@ -2503,294 +2714,190 @@ fun UnifiedColorPickerDialog(
                 ) {
                     Tab(
                         selected = activeTab == ColorPickerTab.BACKGROUND,
-                        onClick = { activeTab = ColorPickerTab.BACKGROUND },
+                        onClick = {
+                            activeTab = ColorPickerTab.BACKGROUND
+                            brightnessMultiplier = 1.0f
+                        },
                         text = { Text("Background", fontWeight = FontWeight.Bold) },
                         modifier = Modifier.testTag("tab_background_color")
                     )
                     Tab(
                         selected = activeTab == ColorPickerTab.TEXT,
-                        onClick = { activeTab = ColorPickerTab.TEXT },
+                        onClick = {
+                            activeTab = ColorPickerTab.TEXT
+                            brightnessMultiplier = 1.0f
+                        },
                         text = { Text("Text Color", fontWeight = FontWeight.Bold) },
                         modifier = Modifier.testTag("tab_text_color")
                     )
                 }
 
-                // Current Applied Color Status Bar
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth()
+                // Color Preview & Hex Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(finalColorInt))
+                            .border(2.dp, Color.Black.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                            .testTag("color_preview_box")
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (activeTab == ColorPickerTab.BACKGROUND) "Current Background:" else "Current Text Color:",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
+                            text = if (activeTab == ColorPickerTab.BACKGROUND) "Selected Background" else "Selected Text Color",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (activeColor != null) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(Color(activeColor))
-                                        .border(1.dp, Color.Black.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = String.format("#%06X", activeColor and 0xFFFFFF),
-                                    fontSize = 12.sp,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            } else {
-                                Text(
-                                    text = "Default",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                                )
-                            }
-                        }
+                        Text(
+                            text = String.format("#%06X", finalColorInt and 0xFFFFFF),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
-                // Preset Swatches Section
+                // Preset Palette Swatches
                 Text(
-                    text = if (activeTab == ColorPickerTab.BACKGROUND) "Preset Background Colors:" else "Preset Text Colors:",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    text = "Quick Palette",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
-
                 val swatches = if (activeTab == ColorPickerTab.BACKGROUND) presetBgSwatches else presetTextSwatches
-
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(4),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 160.dp)
+                        .heightIn(max = 140.dp)
                 ) {
                     items(swatches) { swatch ->
-                        val isSelected = activeColor == swatch.colorInt
                         val swatchColor = Color(swatch.colorInt)
-                        val lum = 0.2126f * swatchColor.red + 0.7152f * swatchColor.green + 0.0722f * swatchColor.blue
-                        val checkTint = if (lum > 0.5f) Color.Black else Color.White
-
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(40.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(swatchColor)
-                                .border(
-                                    width = if (isSelected) 3.dp else 1.dp,
-                                    color = if (isSelected) GreenPrimary else Color.Black.copy(alpha = 0.25f),
-                                    shape = RoundedCornerShape(8.dp)
-                                )
+                                .border(1.dp, Color.Black.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
                                 .clickable {
+                                    baseRed = ((swatch.colorInt shr 16) and 0xFF).toFloat()
+                                    baseGreen = ((swatch.colorInt shr 8) and 0xFF).toFloat()
+                                    baseBlue = (swatch.colorInt and 0xFF).toFloat()
+                                    brightnessMultiplier = 1.0f
                                     if (activeTab == ColorPickerTab.BACKGROUND) {
+                                        workingBgColor = swatch.colorInt
                                         onSetBgColor(swatch.colorInt)
                                     } else {
+                                        workingTextColor = swatch.colorInt
                                         onSetTextColor(swatch.colorInt)
                                     }
                                 }
-                                .testTag("color_swatch_${swatch.name.lowercase().replace(" ", "_")}"),
+                                .testTag("swatch_${swatch.name.lowercase().replace(" ", "_")}"),
                             contentAlignment = Alignment.Center
-                        ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = "Selected",
-                                    tint = checkTint,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
+                        ) {}
                     }
                 }
 
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                HorizontalDivider()
 
-                // Custom Color Toggle / Panel
-                Row(
+                // Graphical Color Picker Canvas & Brightness
+                Text(
+                    text = "Graphical Color Picker",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                // Canvas color picker for Hue & Saturation
+                val hsv = FloatArray(3)
+                android.graphics.Color.colorToHSV(finalColorInt, hsv)
+                var hue by remember(activeTab) { mutableFloatStateOf(hsv[0]) }
+                var saturation by remember(activeTab) { mutableFloatStateOf(hsv[1]) }
+                var value by remember(activeTab) { mutableFloatStateOf(hsv[2]) }
+
+                val canvasColorInt = remember(hue, saturation, value) {
+                    android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value)) or (0xFF shl 24)
+                }
+
+                LaunchedEffect(canvasColorInt) {
+                    if (activeTab == ColorPickerTab.BACKGROUND) {
+                        workingBgColor = canvasColorInt
+                        onSetBgColor(canvasColorInt)
+                    } else {
+                        workingTextColor = canvasColorInt
+                        onSetTextColor(canvasColorInt)
+                    }
+                }
+
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { showCustomControls = !showCustomControls }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .pointerInput(Unit) {
+                            detectTapGestures { offset ->
+                                hue = (offset.x / size.width).coerceIn(0f, 1f) * 360f
+                                saturation = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
+                            }
+                        }
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, _ ->
+                                val offset = change.position
+                                hue = (offset.x / size.width).coerceIn(0f, 1f) * 360f
+                                saturation = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
+                            }
+                        }
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = null,
-                            tint = GreenPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Custom Color (RGB & Hex)",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GreenPrimary
-                        )
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val width = size.width
+                        val height = size.height
+                        val stepsX = 50
+                        val stepsY = 25
+                        val stepW = width / stepsX
+                        val stepH = height / stepsY
+
+                        for (x in 0 until stepsX) {
+                            for (y in 0 until stepsY) {
+                                val h = (x.toFloat() / stepsX) * 360f
+                                val s = 1f - (y.toFloat() / stepsY)
+                                val cInt = android.graphics.Color.HSVToColor(floatArrayOf(h, s, value))
+                                drawRect(
+                                    color = Color(cInt),
+                                    topLeft = Offset(x * stepW, y * stepH),
+                                    size = Size(stepW + 1f, stepH + 1f)
+                                )
+                            }
+                        }
+
+                        val thumbX = (hue / 360f) * width
+                        val thumbY = (1f - saturation) * height
+                        drawCircle(color = Color.White, radius = 7.dp.toPx(), center = Offset(thumbX, thumbY))
+                        drawCircle(color = Color.Black, radius = 5.dp.toPx(), center = Offset(thumbX, thumbY))
                     }
-                    Icon(
-                        imageVector = if (showCustomControls) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (showCustomControls) "Collapse" else "Expand",
-                        tint = GreenPrimary
-                    )
                 }
 
-                if (showCustomControls) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Color Preview & Hex Input Row
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(50.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(customColorInt))
-                                    .border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                    .testTag("custom_color_preview")
-                            )
-
-                            OutlinedTextField(
-                                value = hexInputText,
-                                onValueChange = { input ->
-                                    val cleaned = input.filter { it.isLetterOrDigit() }.take(6).uppercase(Locale.ROOT)
-                                    hexInputText = cleaned
-                                    if (cleaned.length == 6) {
-                                        try {
-                                            val parsed = cleaned.toLong(16).toInt()
-                                            redVal = ((parsed shr 16) and 0xFF).toFloat()
-                                            greenVal = ((parsed shr 8) and 0xFF).toFloat()
-                                            blueVal = (parsed and 0xFF).toFloat()
-                                        } catch (e: Exception) {
-                                            // Ignore parsing error
-                                        }
-                                    }
-                                },
-                                label = { Text("Hex (#RRGGBB)") },
-                                prefix = { Text("#") },
-                                singleLine = true,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("custom_hex_input")
-                            )
-                        }
-
-                        // Red Slider
-                        Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Red", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFD32F2F))
-                                Text("${redVal.roundToInt()}", fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                            }
-                            Slider(
-                                value = redVal,
-                                onValueChange = {
-                                    redVal = it
-                                },
-                                valueRange = 0f..255f,
-                                modifier = Modifier.fillMaxWidth().testTag("slider_red"),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Color(0xFFD32F2F),
-                                    activeTrackColor = Color(0xFFD32F2F)
-                                )
-                            )
-                        }
-
-                        // Green Slider
-                        Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Green", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF388E3C))
-                                Text("${greenVal.roundToInt()}", fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                            }
-                            Slider(
-                                value = greenVal,
-                                onValueChange = {
-                                    greenVal = it
-                                },
-                                valueRange = 0f..255f,
-                                modifier = Modifier.fillMaxWidth().testTag("slider_green"),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Color(0xFF388E3C),
-                                    activeTrackColor = Color(0xFF388E3C)
-                                )
-                            )
-                        }
-
-                        // Blue Slider
-                        Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Blue", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1976D2))
-                                Text("${blueVal.roundToInt()}", fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                            }
-                            Slider(
-                                value = blueVal,
-                                onValueChange = {
-                                    blueVal = it
-                                },
-                                valueRange = 0f..255f,
-                                modifier = Modifier.fillMaxWidth().testTag("slider_blue"),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Color(0xFF1976D2),
-                                    activeTrackColor = Color(0xFF1976D2)
-                                )
-                            )
-                        }
-
-                        // Apply Custom Color Button
-                        Button(
-                            onClick = {
-                                if (activeTab == ColorPickerTab.BACKGROUND) {
-                                    onSetBgColor(customColorInt)
-                                } else {
-                                    onSetTextColor(customColorInt)
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .testTag("apply_custom_color_button")
-                        ) {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Apply Custom Color")
-                        }
+                // Brightness Slider
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Brightness (Value)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
+                        Text("${(value * 100).roundToInt()}%", fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontWeight = FontWeight.Bold)
                     }
+                    Slider(
+                        value = value,
+                        onValueChange = { value = it },
+                        valueRange = 0f..1f,
+                        colors = SliderDefaults.colors(thumbColor = GreenPrimary, activeTrackColor = GreenPrimary),
+                        modifier = Modifier.testTag("graphical_brightness_slider")
+                    )
                 }
 
                 // Reset / Clear Button
@@ -2802,14 +2909,11 @@ fun UnifiedColorPickerDialog(
                             onSetTextColor(null)
                         }
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                        .testTag("clear_color_button")
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (activeTab == ColorPickerTab.BACKGROUND) "Reset Background Color" else "Reset Text Color")
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (activeTab == ColorPickerTab.BACKGROUND) "Reset Background Color" else "Reset Text Color", fontSize = 12.sp)
                 }
             }
         },

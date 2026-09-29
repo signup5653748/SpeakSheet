@@ -83,6 +83,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateLastActionMenuTab(tabIndex: Int) {
+        viewModelScope.launch {
+            val current = appSettings.value
+            settingsRepository.updateSettings(current.copy(lastActionMenuTab = tabIndex))
+        }
+    }
+
     fun openNewSpreadsheet() {
         val defaultR = appSettings.value.defaultRows
         val defaultC = appSettings.value.defaultCols
@@ -340,6 +347,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun speakCell(row: Int, col: Int) {
+        if (spreadsheetEngine.isBannerRow(row)) {
+            val text = spreadsheetEngine.getCellValue(row, 0)
+            ttsManager.speak("Section text: $text")
+            return
+        }
+        if (spreadsheetEngine.isHeaderRow(row)) {
+            val headerTexts = (0 until spreadsheetEngine.maxCol)
+                .map { spreadsheetEngine.getCellValue(row, it) }
+                .filter { it.isNotEmpty() }
+                .joinToString(", ")
+            ttsManager.speak("Header row: $headerTexts")
+            return
+        }
+
         val value = spreadsheetEngine.getCellValue(row, col)
         val formula = spreadsheetEngine.getCellFormulaOrValue(row, col)
         val colLetter = spreadsheetEngine.getColumnName(col)
@@ -454,30 +475,80 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addDividersEveryNRows(n: Int) {
+    fun insertRowAbove(row: Int) {
         viewModelScope.launch {
-            spreadsheetEngine.addDividersEveryNRows(n)
+            spreadsheetEngine.insertRow(row)
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            ttsManager.speak("Added dividers every $n rows")
+            ttsManager.speak("Inserted row above ${row + 1}")
         }
     }
 
-    fun removeDivider(row: Int) {
+    fun insertRowBelow(row: Int) {
         viewModelScope.launch {
-            spreadsheetEngine.removeDivider(row)
+            spreadsheetEngine.insertRow(row + 1)
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            ttsManager.speak("Removed divider at row ${row + 1}")
+            ttsManager.speak("Inserted row below ${row + 1}")
         }
     }
 
-    fun removeAllDividers() {
+    fun insertBannerAbove(row: Int, onEdit: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
-            spreadsheetEngine.removeAllDividers()
+            spreadsheetEngine.insertRow(row)
+            spreadsheetEngine.mergeRange(row, 0, row, spreadsheetEngine.maxCol - 1)
+            spreadsheetEngine.setCell(row, 0, "New Banner")
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            ttsManager.speak("Removed all dividers")
+            ttsManager.speak("Inserted banner above row ${row + 1}")
+            onEdit(Pair(row, 0))
+        }
+    }
+
+    fun insertBannerBelow(row: Int, onEdit: (Pair<Int, Int>) -> Unit) {
+        viewModelScope.launch {
+            val targetRow = row + 1
+            spreadsheetEngine.insertRow(targetRow)
+            spreadsheetEngine.mergeRange(targetRow, 0, targetRow, spreadsheetEngine.maxCol - 1)
+            spreadsheetEngine.setCell(targetRow, 0, "New Banner")
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Inserted banner below row ${row + 1}")
+            onEdit(Pair(targetRow, 0))
+        }
+    }
+
+    fun convertRowToBanner(row: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.mergeRange(row, 0, row, spreadsheetEngine.maxCol - 1)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Converted row ${row + 1} to banner")
+        }
+    }
+
+    fun unmergeBanner(row: Int) {
+        viewModelScope.launch {
+            spreadsheetEngine.unmergeRow(row)
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Unmerged banner at row ${row + 1}")
+        }
+    }
+
+    fun setHeaderRow(row: Int) {
+        viewModelScope.launch {
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Set row ${row + 1} as header")
+        }
+    }
+
+    fun clearHeaderRow(row: Int) {
+        viewModelScope.launch {
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Cleared header row")
         }
     }
 
@@ -706,6 +777,104 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         setCellColor(row, col, null)
         setCellTextColor(row, col, null)
         ttsManager.speak("Deleted cell $cellName")
+    }
+
+    fun undo() {
+        val desc = spreadsheetEngine.undo()
+        if (desc != null) {
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Undone: $desc")
+        } else {
+            ttsManager.speak("Nothing to undo")
+        }
+    }
+
+    fun redo() {
+        val desc = spreadsheetEngine.redo()
+        if (desc != null) {
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Redone: $desc")
+        } else {
+            ttsManager.speak("Nothing to redo")
+        }
+    }
+
+    fun fillDown(startR: Int, startC: Int, endR: Int, endC: Int) {
+        spreadsheetEngine.fillDown(startR, startC, endR, endC)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Filled down")
+    }
+
+    fun fillRight(startR: Int, startC: Int, endR: Int, endC: Int) {
+        spreadsheetEngine.fillRight(startR, startC, endR, endC)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Filled right")
+    }
+
+    fun pasteSpecial(targetR: Int, targetC: Int, sourceR: Int, sourceC: Int, mode: SpreadsheetEngine.PasteMode) {
+        spreadsheetEngine.pasteSpecial(targetR, targetC, sourceR, sourceC, mode)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Paste special applied")
+    }
+
+    fun findAndReplace(find: String, replace: String, matchCase: Boolean) {
+        val count = spreadsheetEngine.findAndReplace(find, replace, matchCase)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Replaced $count occurrences")
+    }
+
+    fun setCellBold(r: Int, c: Int, bold: Boolean) {
+        spreadsheetEngine.pushUndo("Toggle Bold")
+        spreadsheetEngine.setCellBold(r, c, bold)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak(if (bold) "Bold applied" else "Bold removed")
+    }
+
+    fun setCellItalic(r: Int, c: Int, italic: Boolean) {
+        spreadsheetEngine.pushUndo("Toggle Italic")
+        spreadsheetEngine.setCellItalic(r, c, italic)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak(if (italic) "Italic applied" else "Italic removed")
+    }
+
+    fun setCellAlignment(r: Int, c: Int, align: Int) {
+        spreadsheetEngine.pushUndo("Change Alignment")
+        spreadsheetEngine.setCellAlignment(r, c, align)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        val alignName = when(align) { 1 -> "Center"; 2 -> "Right"; else -> "Left" }
+        ttsManager.speak("Aligned $alignName")
+    }
+
+    fun setCellNumberFormat(r: Int, c: Int, fmt: String) {
+        spreadsheetEngine.pushUndo("Change Number Format")
+        spreadsheetEngine.setCellNumberFormat(r, c, fmt)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Format set to $fmt")
+    }
+
+    fun setCellBorders(r: Int, c: Int, border: Int) {
+        spreadsheetEngine.pushUndo("Change Borders")
+        spreadsheetEngine.setCellBorders(r, c, border)
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Borders updated")
+    }
+
+    fun setFreezePanes(rows: Int, cols: Int) {
+        spreadsheetEngine.frozenRows = rows
+        spreadsheetEngine.frozenCols = cols
+        _gridRefreshTrigger.value += 1
+        ttsManager.speak("Freeze panes updated")
     }
 
     override fun onCleared() {

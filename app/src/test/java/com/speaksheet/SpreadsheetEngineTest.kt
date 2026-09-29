@@ -217,9 +217,9 @@ class SpreadsheetEngineTest {
         engine.setColumnWrap(1, true)
         assertTrue(engine.isWrapEnabled(1))
 
-        // Set short text in row 0, long multiline text in row 1
-        engine.setCell(0, 1, "Short")
-        engine.setCell(1, 1, "Line 1\nLine 2\nLine 3\nLine 4")
+        // Set short text in row 40, long multiline text in row 41
+        engine.setCell(40, 1, "Short")
+        engine.setCell(41, 1, "Line 1\nLine 2\nLine 3\nLine 4")
 
         // Custom measurer simulation: 24px per line for multiline text
         engine.updateLayoutIfNeeded(density = 1f, largeTouch = false) { r, c, text, _ ->
@@ -227,21 +227,21 @@ class SpreadsheetEngineTest {
             if (lines <= 1) 20f else lines * 24f + 10f
         }
 
-        val row0Height = engine.getRowHeightPx(0)
-        val row1Height = engine.getRowHeightPx(1)
+        val row0Height = engine.getRowHeightPx(40)
+        val row1Height = engine.getRowHeightPx(41)
 
-        // Row 0 height should stay at default (32f)
+        // Row 40 height should stay at default (32f)
         assertEquals(32f, row0Height, 0.01f)
 
-        // Row 1 height should expand to fit the 4 lines (4 * 24 + 10 = 106f)
-        assertTrue("Row 1 height ($row1Height) should be taller than row 0 ($row0Height)", row1Height > row0Height)
+        // Row 41 height should expand to fit the 4 lines (4 * 24 + 10 = 106f)
+        assertTrue("Row 41 height ($row1Height) should be taller than row 40 ($row0Height)", row1Height > row0Height)
         assertEquals(106f, row1Height, 0.01f)
 
         // getRowHeightDp should also return the expanded height
-        assertEquals(106f, engine.getRowHeightDp(1), 0.01f)
+        assertEquals(106f, engine.getRowHeightDp(41), 0.01f)
 
-        // Row 2 without content in wrapped column stays default
-        assertEquals(32f, engine.getRowHeightPx(2), 0.01f)
+        // Row 42 without content in wrapped column stays default
+        assertEquals(32f, engine.getRowHeightPx(42), 0.01f)
     }
 
     @Test

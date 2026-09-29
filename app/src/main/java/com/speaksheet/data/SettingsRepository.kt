@@ -46,7 +46,8 @@ data class AppSettings(
     val showRowNumbers: Boolean = true,
     val deleteMode: DeleteMode = DeleteMode.CLEAR_CELL,
     val voiceTypingLanguage: String = "",
-    val lastActionTab: Int = 0
+    val lastActionMenuTab: Int = 0,
+    val showGridlines: Boolean = true
 )
 
 class SettingsRepository(private val context: Context) {
@@ -71,7 +72,8 @@ class SettingsRepository(private val context: Context) {
         val SHOW_ROW_NUMBERS = booleanPreferencesKey("show_row_numbers")
         val DELETE_MODE = intPreferencesKey("delete_mode")
         val VOICE_TYPING_LANG = stringPreferencesKey("voice_typing_lang")
-        val LAST_ACTION_TAB = intPreferencesKey("last_action_tab")
+        val LAST_ACTION_MENU_TAB = intPreferencesKey("last_action_menu_tab")
+        val SHOW_GRIDLINES = booleanPreferencesKey("show_gridlines")
     }
 
     val appSettingsFlow: Flow<AppSettings> = context.dataStore.data
@@ -96,7 +98,8 @@ class SettingsRepository(private val context: Context) {
                 showRowNumbers = preferences[PreferencesKeys.SHOW_ROW_NUMBERS] ?: true,
                 deleteMode = DeleteMode.entries.getOrElse(preferences[PreferencesKeys.DELETE_MODE] ?: 0) { DeleteMode.CLEAR_CELL },
                 voiceTypingLanguage = preferences[PreferencesKeys.VOICE_TYPING_LANG] ?: "",
-                lastActionTab = preferences[PreferencesKeys.LAST_ACTION_TAB] ?: 0
+                lastActionMenuTab = preferences[PreferencesKeys.LAST_ACTION_MENU_TAB] ?: 0,
+                showGridlines = preferences[PreferencesKeys.SHOW_GRIDLINES] ?: true
             )
         }
 
@@ -121,7 +124,8 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_ROW_NUMBERS] = settings.showRowNumbers
             preferences[PreferencesKeys.DELETE_MODE] = settings.deleteMode.ordinal
             preferences[PreferencesKeys.VOICE_TYPING_LANG] = settings.voiceTypingLanguage
-            preferences[PreferencesKeys.LAST_ACTION_TAB] = settings.lastActionTab
+            preferences[PreferencesKeys.LAST_ACTION_MENU_TAB] = settings.lastActionMenuTab
+            preferences[PreferencesKeys.SHOW_GRIDLINES] = settings.showGridlines
         }
     }
 }
