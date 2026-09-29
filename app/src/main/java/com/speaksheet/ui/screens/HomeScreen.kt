@@ -1,5 +1,6 @@
 package com.speaksheet.ui.screens
 
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,14 +14,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FileOpen
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TableChart
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,9 +34,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.speaksheet.data.RecentFile
-import com.speaksheet.data.SampleSheet
-import com.speaksheet.data.SampleSheets
 import com.speaksheet.ui.theme.GreenPrimary
 import com.speaksheet.viewmodel.MainViewModel
 import java.text.SimpleDateFormat
@@ -62,27 +60,38 @@ fun HomeScreen(
     }
     
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { uri: Uri? ->
             uri?.let {
-                var name: String? = null
-                if (it.scheme == "content") {
-                    try {
-                        context.contentResolver.query(it, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                            val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                            if (idx != -1 && cursor.moveToFirst()) {
-                                name = cursor.getString(idx)
-                            }
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        it,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (_: Throwable) {}
+                coroutineScope.launch {
+                    val finalName = withContext(Dispatchers.IO) {
+                        var name: String? = null
+                        if (it.scheme == "content") {
+                            try {
+                                context.contentResolver.query(it, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                    if (idx != -1 && cursor.moveToFirst()) {
+                                        name = cursor.getString(idx)
+                                    }
+                                }
+                            } catch (_: Exception) {}
                         }
-                    } catch (_: Exception) {}
+                        if (name.isNullOrBlank()) {
+                            name = it.lastPathSegment?.substringAfterLast('/')
+                        }
+                        name?.takeIf { n -> n.isNotBlank() } ?: "Imported File.xlsx"
+                    }
+                    viewModel.openFile(it, finalName)
+                    onNavigateToSpreadsheet()
                 }
-                if (name.isNullOrBlank()) {
-                    name = it.lastPathSegment?.substringAfterLast('/')
-                }
-                val finalName = name?.takeIf { it.isNotBlank() } ?: "Imported File.xlsx"
-                viewModel.openFile(it, finalName)
-                onNavigateToSpreadsheet()
             }
         }
     )
@@ -157,48 +166,89 @@ fun HomeScreen(
                 )
             }
             
-            // Sample Spreadsheets for Quick Testing
+            // Templates Section
             item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Sample Files (Ready to Test)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "3 Templates",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = GreenPrimary
-                    )
-                }
-            }
-
-            item {
+                Text(
+                    text = "Templates",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 20.dp)
                 ) {
-                    items(SampleSheets.ALL_SAMPLES, key = { it.id }) { sample ->
-                        SampleFileCard(
-                            sample = sample,
-                            onOpen = {
-                                viewModel.openSampleSpreadsheet(sample.id)
+                    item {
+                        Card(
+                            onClick = {
+                                viewModel.openNewSpreadsheet()
                                 onNavigateToSpreadsheet()
+                            },
+                            modifier = Modifier
+                                .width(160.dp)
+                                .testTag("template_blank_spreadsheet"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                horizontalAlignment = Alignment.Start
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = GreenPrimary.copy(alpha = 0.2f),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Add, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text("Blank Sheet", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("Empty grid", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                        )
+                        }
+                    }
+
+                    item {
+                        Card(
+                            onClick = {
+                                viewModel.openSampleSectionedReport()
+                                onNavigateToSpreadsheet()
+                            },
+                            modifier = Modifier
+                                .width(200.dp)
+                                .testTag("template_sectioned_report"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                horizontalAlignment = Alignment.Start
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF1B5E20).copy(alpha = 0.2f),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.TableChart, contentDescription = null, tint = Color(0xFF1B5E20), modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text("Sectioned Report", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("Sample with banners & subtotals", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
-            
+
             // Recent Files Header & Action buttons
             item {
                 Row(
@@ -276,7 +326,7 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Create a blank sheet or tap a template to get started!",
+                                text = "Create a blank sheet or import a file from your device to get started!",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
@@ -317,99 +367,6 @@ fun HomeScreen(
 private val recentFileDateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
 
 @Composable
-fun SampleFileCard(sample: SampleSheet, onOpen: () -> Unit) {
-    val (icon, badgeColor) = when (sample.category) {
-        "Finance" -> Icons.Default.AttachMoney to Color(0xFF2E7D32)
-        "Business" -> Icons.Filled.TrendingUp to Color(0xFF1565C0)
-        else -> Icons.Default.School to Color(0xFF6A1B9A)
-    }
-
-    Card(
-        modifier = Modifier
-            .width(220.dp)
-            .clickable { onOpen() }
-            .testTag("sample_${sample.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = badgeColor.copy(alpha = 0.15f)
-                ) {
-                    Text(
-                        text = sample.category.uppercase(),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = badgeColor
-                    )
-                }
-                
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = badgeColor,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(10.dp))
-            
-            Text(
-                text = sample.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            
-            Spacer(modifier = Modifier.height(4.dp))
-            
-            Text(
-                text = sample.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
-                modifier = Modifier.height(30.dp)
-            )
-            
-            Spacer(modifier = Modifier.height(10.dp))
-            
-            Button(
-                onClick = onOpen,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
-                contentPadding = PaddingValues(vertical = 6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Open & Test", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-}
-
-@Composable
 fun RecentFileCard(
     file: RecentFile, 
     onClick: () -> Unit,
@@ -418,7 +375,6 @@ fun RecentFileCard(
     val dateStr = remember(file.lastModified) {
         recentFileDateFormat.format(Date(file.lastModified))
     }
-    val isSample = file.uri.startsWith("sample://")
     
     Card(
         modifier = Modifier
@@ -440,7 +396,7 @@ fun RecentFileCard(
         ) {
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = if (isSample) GreenPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
                 modifier = Modifier.size(44.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -454,31 +410,14 @@ fun RecentFileCard(
             }
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = file.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (isSample) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = GreenPrimary.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                text = "SAMPLE",
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = GreenPrimary
-                            )
-                        }
-                    }
-                }
+                Text(
+                    text = file.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Last opened: $dateStr",
@@ -486,11 +425,11 @@ fun RecentFileCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
             }
-            if (!isSample && onDelete != null) {
+            if (onDelete != null) {
                 IconButton(
                     onClick = onDelete,
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(48.dp)
                         .testTag("delete_recent_${file.name.replace(" ", "_")}")
                 ) {
                     Icon(

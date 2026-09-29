@@ -13,6 +13,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -40,18 +42,20 @@ class MainActivity : ComponentActivity() {
                 val pendingUri by pendingFileUri
                 LaunchedEffect(pendingUri) {
                     val uri = pendingUri ?: return@LaunchedEffect
-                    try {
-                        val flags = intent?.flags ?: 0
-                        if ((flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0 && uri.scheme == "content") {
-                            try {
-                                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            } catch (_: SecurityException) {
-                                // Persistable permission not grantable or not needed
+                    val fileName = withContext(Dispatchers.IO) {
+                        try {
+                            val flags = intent?.flags ?: 0
+                            if ((flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0 && uri.scheme == "content") {
+                                try {
+                                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                } catch (_: SecurityException) {
+                                    // Persistable permission not grantable or not needed
+                                }
                             }
-                        }
-                    } catch (_: Exception) {}
+                        } catch (_: Exception) {}
+                        resolveFileName(this@MainActivity, uri)
+                    }
 
-                    val fileName = resolveFileName(this@MainActivity, uri)
                     viewModel.openFile(uri, fileName)
                     navController.navigate("spreadsheet") {
                         popUpTo("home") { inclusive = false }

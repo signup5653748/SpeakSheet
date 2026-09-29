@@ -1,7 +1,12 @@
 package com.speaksheet.viewmodel
 
 import android.app.Application
+import android.content.ContentValues
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.speaksheet.data.AppDatabase
@@ -9,7 +14,6 @@ import com.speaksheet.data.AppSettings
 import com.speaksheet.data.DeleteMode
 import com.speaksheet.data.InteractionMode
 import com.speaksheet.data.RecentFile
-import com.speaksheet.data.SampleSheets
 import com.speaksheet.data.SettingsRepository
 import com.speaksheet.utils.SpreadsheetEngine
 import com.speaksheet.utils.TtsManager
@@ -27,6 +31,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val settingsRepository = SettingsRepository(application)
     private val recentFileDao = AppDatabase.getDatabase(application).recentFileDao()
+    private val sheetDao = AppDatabase.getDatabase(application).sheetDao()
     
     val ttsManager = TtsManager(application)
     val spreadsheetEngine = SpreadsheetEngine()
@@ -47,25 +52,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _gridRefreshTrigger = MutableStateFlow(0)
     val gridRefreshTrigger: StateFlow<Int> = _gridRefreshTrigger.asStateFlow()
 
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
+
+    private val _canRedo = MutableStateFlow(false)
+    val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+
+    fun updateUndoRedoState() {
+        _canUndo.value = spreadsheetEngine.canUndo
+        _canRedo.value = spreadsheetEngine.canRedo
+    }
+
+    private var autoSaveJob: kotlinx.coroutines.Job? = null
+
+    fun switchSheet(index: Int): Boolean {
+        val success = spreadsheetEngine.switchSheet(index)
+        if (success) {
+            updateUndoRedoState()
+            _gridRefreshTrigger.value += 1
+            ttsManager.speak("Switched to ${spreadsheetEngine.getActiveSheetName()}")
+            autoSaveCurrentFile()
+        }
+        return success
+    }
+
+    fun addSheet(name: String = ""): Int {
+        val idx = spreadsheetEngine.addSheet(name)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        ttsManager.speak("Added and switched to ${spreadsheetEngine.getActiveSheetName()}")
+        autoSaveCurrentFile()
+        return idx
+    }
+
+    fun renameSheet(index: Int, newName: String): Boolean {
+        val success = spreadsheetEngine.renameSheet(index, newName)
+        if (success) {
+            _gridRefreshTrigger.value += 1
+            ttsManager.speak("Sheet renamed to $newName")
+            autoSaveCurrentFile()
+        }
+        return success
+    }
+
+    fun deleteSheet(index: Int): Boolean {
+        val success = spreadsheetEngine.deleteSheet(index)
+        if (success) {
+            updateUndoRedoState()
+            _gridRefreshTrigger.value += 1
+            ttsManager.speak("Sheet deleted. Switched to ${spreadsheetEngine.getActiveSheetName()}")
+            autoSaveCurrentFile()
+        }
+        return success
+    }
+
+    fun openSampleSectionedReport() {
+        _currentFileUri.value = null
+        _currentFileName.value = "Sectioned_Report_Sample.xlsx"
+        spreadsheetEngine.newSpreadsheet()
+        com.speaksheet.utils.SampleSheets.createSectionedReport(spreadsheetEngine)
+        spreadsheetEngine.clearHistory()
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        ttsManager.speak("Opened Sectioned Report sample spreadsheet")
+    }
+
     init {
-        // Pre-populate sample sheets into Recent Files on first launch if empty
-        viewModelScope.launch {
+        // Clean out any legacy sample files from recent files database
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (recentFileDao.getRecentFilesCount() == 0) {
-                    SampleSheets.ALL_SAMPLES.forEachIndexed { index, sample ->
-                        recentFileDao.upsertRecentFile(
-                            RecentFile(
-                                uri = "sample://${sample.id}",
-                                name = "${sample.title}.xlsx",
-                                path = "sample://${sample.id}",
-                                lastModified = System.currentTimeMillis() - (index * 60_000L),
-                                sizeBytes = 15_360L
-                            )
-                        )
-                    }
-                }
-            } catch (e: Throwable) {
-                // Ignore initialization error gracefully
+                recentFileDao.deleteSampleFiles()
+            } catch (_: Throwable) {
+                // Ignore initialization cleanup error gracefully
             }
         }
     }
@@ -96,25 +154,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         // 1. Immediately reset spreadsheet engine synchronously
         spreadsheetEngine.newSpreadsheet(rows = defaultR, cols = defaultC)
+        spreadsheetEngine.clearHistory()
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
 
         viewModelScope.launch {
-            // 2. Find next available name e.g. "Spreadsheet 1.xlsx", "Spreadsheet 2.xlsx", etc.
-            val docsDir = File(getApplication<Application>().filesDir, "spreadsheets").apply { mkdirs() }
-            val existingFiles = recentFileDao.getRecentFilesList()
-            var count = 1
-            var docName: String
-            while (true) {
-                docName = "Spreadsheet $count.xlsx"
-                val file = File(docsDir, docName)
-                val existsInDb = existingFiles.any { it.name.equals(docName, ignoreCase = true) }
-                if (!file.exists() && !existsInDb) {
-                    break
+            // Cancel any pending auto-save from previous sheet
+            autoSaveJob?.cancel()
+
+            // 2. Offload directory and file existence checks to Dispatchers.IO
+            val (newFile, docName) = withContext(Dispatchers.IO) {
+                val docsDir = File(getApplication<Application>().filesDir, "spreadsheets").apply { mkdirs() }
+                val existingFiles = recentFileDao.getRecentFilesList()
+                var count = 1
+                var name: String
+                while (true) {
+                    name = "Spreadsheet $count.xlsx"
+                    val file = File(docsDir, name)
+                    val existsInDb = existingFiles.any { it.name.equals(name, ignoreCase = true) }
+                    if (!file.exists() && !existsInDb) {
+                        break
+                    }
+                    count++
                 }
-                count++
+                Pair(File(docsDir, name), name)
             }
 
-            val newFile = File(docsDir, docName)
             spreadsheetEngine.saveToFile(newFile)
 
             val fileUri = Uri.fromFile(newFile)
@@ -122,9 +187,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _currentFileName.value = docName
 
             // 3. Register in Room DB so it appears in Recent Files immediately
+            val targetUriStr = fileUri.toString()
             recentFileDao.upsertRecentFile(
                 RecentFile(
-                    uri = fileUri.toString(),
+                    uri = targetUriStr,
                     name = docName,
                     path = newFile.absolutePath,
                     lastModified = System.currentTimeMillis(),
@@ -132,30 +198,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
 
+            val sheetEntities = spreadsheetEngine.sheets.mapIndexed { idx, s ->
+                com.speaksheet.data.SheetEntity(
+                    fileUri = targetUriStr,
+                    sheetName = s.name,
+                    sheetIndex = idx,
+                    zoom = s.zoom,
+                    scrollX = s.scrollX,
+                    scrollY = s.scrollY,
+                    frozenRows = s.frozenRows,
+                    frozenCols = s.frozenCols
+                )
+            }
+            sheetDao.replaceSheetsForFile(targetUriStr, sheetEntities)
+
             _gridRefreshTrigger.value += 1
             ttsManager.speak("Created new empty spreadsheet $docName")
         }
     }
 
     private fun autoSaveCurrentFile() {
-        val uri = _currentFileUri.value ?: return
-        viewModelScope.launch(Dispatchers.IO) {
+        val fileName = _currentFileName.value
+        val uri = _currentFileUri.value
+        autoSaveJob?.cancel()
+        autoSaveJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(400) // Debounce rapid edits and multi-step mutations
             try {
-                if (uri.scheme == "file") {
-                    val file = File(uri.path ?: return@launch)
-                    spreadsheetEngine.saveToFile(file)
-                    recentFileDao.upsertRecentFile(
-                        RecentFile(
-                            uri = uri.toString(),
-                            name = _currentFileName.value,
-                            path = file.absolutePath,
-                            lastModified = System.currentTimeMillis(),
-                            sizeBytes = file.length()
-                        )
+                val context = getApplication<Application>()
+                // 1. Always keep local app working file updated
+                val docsDir = File(context.filesDir, "spreadsheets").apply { mkdirs() }
+                val localFile = File(docsDir, fileName)
+                spreadsheetEngine.saveToFile(localFile)
+                val targetUriStr = uri?.toString() ?: Uri.fromFile(localFile).toString()
+                recentFileDao.upsertRecentFile(
+                    RecentFile(
+                        uri = targetUriStr,
+                        name = fileName,
+                        path = localFile.absolutePath,
+                        lastModified = System.currentTimeMillis(),
+                        sizeBytes = localFile.length()
                     )
-                } else if (uri.scheme == "content") {
-                    getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
-                        if (_currentFileName.value.endsWith(".csv", ignoreCase = true)) {
+                )
+
+                val sheetEntities = spreadsheetEngine.sheets.mapIndexed { idx, s ->
+                    com.speaksheet.data.SheetEntity(
+                        fileUri = targetUriStr,
+                        sheetName = s.name,
+                        sheetIndex = idx,
+                        zoom = s.zoom,
+                        scrollX = s.scrollX,
+                        scrollY = s.scrollY,
+                        frozenRows = s.frozenRows,
+                        frozenCols = s.frozenCols
+                    )
+                }
+                sheetDao.replaceSheetsForFile(targetUriStr, sheetEntities)
+
+                // 2. If opened from an external writable content URI (e.g. SAF), write changes back
+                if (uri != null && uri.scheme == "content" && !uri.toString().startsWith("sample://") && !uri.toString().contains("media/external")) {
+                    context.contentResolver.openOutputStream(uri, "w")?.use { out ->
+                        if (fileName.endsWith(".csv", ignoreCase = true)) {
                             spreadsheetEngine.saveCSV(out)
                         } else {
                             spreadsheetEngine.saveXLSX(out)
@@ -168,65 +270,191 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveDocument(onSaved: ((Boolean) -> Unit)? = null) {
-        val uri = _currentFileUri.value
+    fun saveDocument(onSaved: ((Boolean, String) -> Unit)? = null) {
+        val fileName = _currentFileName.value.let { name ->
+            if (name.endsWith(".xlsx", ignoreCase = true) || name.endsWith(".csv", ignoreCase = true)) {
+                name
+            } else {
+                "$name.xlsx"
+            }
+        }
+        val isCsv = fileName.endsWith(".csv", ignoreCase = true)
+        val mimeType = if (isCsv) "text/csv" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        val context = getApplication<Application>()
+
+        autoSaveJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (uri != null && uri.scheme == "file") {
-                    val file = File(uri.path ?: return@launch)
-                    spreadsheetEngine.saveToFile(file)
-                    recentFileDao.upsertRecentFile(
-                        RecentFile(
-                            uri = uri.toString(),
-                            name = _currentFileName.value,
-                            path = file.absolutePath,
-                            lastModified = System.currentTimeMillis(),
-                            sizeBytes = file.length()
-                        )
-                    )
-                    withContext(Dispatchers.Main) {
-                        onSaved?.invoke(true)
-                    }
-                    ttsManager.speak("Spreadsheet saved")
-                } else if (uri != null && uri.scheme == "content") {
-                    getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
-                        if (_currentFileName.value.endsWith(".csv", ignoreCase = true)) {
-                            spreadsheetEngine.saveCSV(out)
-                        } else {
-                            spreadsheetEngine.saveXLSX(out)
+                // 1. Always ensure local working copy is up to date first
+                try {
+                    val docsDir = File(context.filesDir, "spreadsheets").apply { mkdirs() }
+                    val localFile = File(docsDir, fileName)
+                    spreadsheetEngine.saveToFile(localFile)
+                } catch (_: Throwable) {}
+
+                var savedUri: Uri? = null
+                var displayPath = "Downloads/$fileName"
+                var saveSuccess = false
+
+                // 2. If currently opened from an external writable content URI (e.g. SAF file picker), update it directly
+                val curUri = _currentFileUri.value
+                if (curUri != null && curUri.scheme == "content" && !curUri.toString().startsWith("sample://") && !curUri.toString().contains("media/external")) {
+                    try {
+                        context.contentResolver.openOutputStream(curUri, "w")?.use { out ->
+                            if (isCsv) {
+                                spreadsheetEngine.saveCSV(out)
+                            } else {
+                                spreadsheetEngine.saveXLSX(out)
+                            }
+                            saveSuccess = true
+                            savedUri = curUri
+                            displayPath = fileName
                         }
+                    } catch (_: Throwable) {
+                        // Content URI write failed or not permitted, will save to device storage below
                     }
-                    withContext(Dispatchers.Main) {
-                        onSaved?.invoke(true)
+                }
+
+                // 3. Save to device's public Downloads storage via MediaStore (Android Q+)
+                if (!saveSuccess && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        val resolver = context.contentResolver
+                        val contentValues = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                            put(MediaStore.MediaColumns.IS_PENDING, 1)
+                        }
+                        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                        val insertedUri = resolver.insert(collection, contentValues)
+                        if (insertedUri != null) {
+                            resolver.openOutputStream(insertedUri, "w")?.use { out ->
+                                if (isCsv) {
+                                    spreadsheetEngine.saveCSV(out)
+                                } else {
+                                    spreadsheetEngine.saveXLSX(out)
+                                }
+                            }
+                            contentValues.clear()
+                            contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                            resolver.update(insertedUri, contentValues, null, null)
+                            savedUri = insertedUri
+                            displayPath = "Downloads/$fileName"
+                            saveSuccess = true
+                        }
+                    } catch (_: Throwable) {
+                        // MediaStore insert or write failed, will attempt public file storage fallback
                     }
-                    ttsManager.speak("Spreadsheet saved")
-                } else {
-                    val docsDir = File(getApplication<Application>().filesDir, "spreadsheets").apply { mkdirs() }
-                    val docName = _currentFileName.value.takeIf { it.endsWith(".xlsx") || it.endsWith(".csv") }
-                        ?: "${_currentFileName.value}.xlsx"
-                    val newFile = File(docsDir, docName)
-                    spreadsheetEngine.saveToFile(newFile)
-                    val newUri = Uri.fromFile(newFile)
-                    _currentFileUri.value = newUri
+                }
+
+                // 4. Fallback to direct public Downloads directory
+                if (!saveSuccess) {
+                    try {
+                        @Suppress("DEPRECATION")
+                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        downloadsDir.mkdirs()
+                        val targetFile = File(downloadsDir, fileName)
+                        targetFile.outputStream().use { out ->
+                            if (isCsv) {
+                                spreadsheetEngine.saveCSV(out)
+                            } else {
+                                spreadsheetEngine.saveXLSX(out)
+                            }
+                        }
+                        savedUri = Uri.fromFile(targetFile)
+                        displayPath = "Downloads/$fileName"
+                        saveSuccess = true
+                    } catch (_: Throwable) {}
+                }
+
+                // 5. Fallback to app's external Documents directory
+                if (!saveSuccess) {
+                    try {
+                        val extDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+                        val targetFile = File(extDir, fileName)
+                        targetFile.outputStream().use { out ->
+                            if (isCsv) {
+                                spreadsheetEngine.saveCSV(out)
+                            } else {
+                                spreadsheetEngine.saveXLSX(out)
+                            }
+                        }
+                        savedUri = Uri.fromFile(targetFile)
+                        displayPath = "Documents/$fileName"
+                        saveSuccess = true
+                    } catch (_: Throwable) {}
+                }
+
+                if (savedUri != null) {
                     recentFileDao.upsertRecentFile(
                         RecentFile(
-                            uri = newUri.toString(),
-                            name = docName,
-                            path = newFile.absolutePath,
+                            uri = savedUri.toString(),
+                            name = fileName,
+                            path = displayPath,
                             lastModified = System.currentTimeMillis(),
-                            sizeBytes = newFile.length()
+                            sizeBytes = 15_360L
                         )
                     )
-                    withContext(Dispatchers.Main) {
-                        onSaved?.invoke(true)
-                    }
-                    ttsManager.speak("Spreadsheet saved")
                 }
-            } catch (_: Throwable) {
+
                 withContext(Dispatchers.Main) {
-                    onSaved?.invoke(false)
+                    if (saveSuccess) {
+                        onSaved?.invoke(true, displayPath)
+                        ttsManager.speak("Saved to device: $fileName")
+                    } else {
+                        onSaved?.invoke(false, "Could not write to storage")
+                        ttsManager.speak("Save failed")
+                    }
                 }
-                ttsManager.speak("Save failed")
+            } catch (e: Throwable) {
+                withContext(Dispatchers.Main) {
+                    onSaved?.invoke(false, e.localizedMessage ?: "Save failed")
+                    ttsManager.speak("Save failed")
+                }
+            }
+        }
+    }
+
+    fun exportToUri(destinationUri: Uri, onResult: ((Boolean, String) -> Unit)? = null) {
+        val fileName = _currentFileName.value
+        val isCsv = fileName.endsWith(".csv", ignoreCase = true)
+        val context = getApplication<Application>()
+
+        autoSaveJob?.cancel()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                context.contentResolver.openOutputStream(destinationUri, "w")?.use { out ->
+                    if (isCsv) {
+                        spreadsheetEngine.saveCSV(out)
+                    } else {
+                        spreadsheetEngine.saveXLSX(out)
+                    }
+                }
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        destinationUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (_: Throwable) {}
+                _currentFileUri.value = destinationUri
+                recentFileDao.upsertRecentFile(
+                    RecentFile(
+                        uri = destinationUri.toString(),
+                        name = fileName,
+                        path = destinationUri.toString(),
+                        lastModified = System.currentTimeMillis(),
+                        sizeBytes = 15_360L
+                    )
+                )
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(true, "Saved to device as $fileName")
+                    ttsManager.speak("Document saved to device as $fileName")
+                }
+            } catch (e: Throwable) {
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(false, e.localizedMessage ?: "Export failed")
+                    ttsManager.speak("Save failed")
+                }
             }
         }
     }
@@ -241,13 +469,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val uri = _currentFileUri.value
         if (uri != null && uri.scheme == "file") {
-            val oldFile = File(uri.path ?: return)
-            val newFile = File(oldFile.parentFile, finalName)
-            if (oldFile.exists() && oldFile.renameTo(newFile)) {
-                val newUri = Uri.fromFile(newFile)
-                _currentFileUri.value = newUri
-                _currentFileName.value = finalName
-                viewModelScope.launch {
+            viewModelScope.launch(Dispatchers.IO) {
+                val oldFile = File(uri.path ?: return@launch)
+                val newFile = File(oldFile.parentFile, finalName)
+                if (oldFile.exists() && oldFile.renameTo(newFile)) {
+                    val newUri = Uri.fromFile(newFile)
+                    _currentFileUri.value = newUri
+                    _currentFileName.value = finalName
                     recentFileDao.deleteRecentFileByUri(uri.toString())
                     recentFileDao.upsertRecentFile(
                         RecentFile(
@@ -258,10 +486,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             sizeBytes = newFile.length()
                         )
                     )
+                    withContext(Dispatchers.Main) {
+                        ttsManager.speak("Renamed to $finalName")
+                    }
                 }
-                ttsManager.speak("Renamed to $finalName")
-                return
             }
+            return
         }
         _currentFileName.value = finalName
         ttsManager.speak("Renamed to $finalName")
@@ -280,42 +510,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openSampleSpreadsheet(sampleId: String) {
-        val sample = SampleSheets.getSample(sampleId) ?: return
-        val sampleUri = "sample://${sample.id}"
-        _currentFileUri.value = Uri.parse(sampleUri)
-        _currentFileName.value = "${sample.title}.xlsx"
-        
-        viewModelScope.launch {
-            withContext(Dispatchers.Default) {
-                spreadsheetEngine.loadSampleData(sample.title, sample.rows)
-            }
-            _gridRefreshTrigger.value += 1
-            ttsManager.speak("Loaded ${sample.title}")
-
-            recentFileDao.upsertRecentFile(
-                RecentFile(
-                    uri = sampleUri,
-                    name = "${sample.title}.xlsx",
-                    path = sampleUri,
-                    lastModified = System.currentTimeMillis(),
-                    sizeBytes = 15_360L
-                )
-            )
-        }
-    }
-
     fun openFile(uri: Uri, name: String) {
-        if (uri.toString().startsWith("sample://")) {
-            val sampleId = uri.toString().removePrefix("sample://")
-            openSampleSpreadsheet(sampleId)
-            return
-        }
-        
         _currentFileUri.value = uri
         _currentFileName.value = name
         viewModelScope.launch {
             spreadsheetEngine.loadFromUri(getApplication(), uri)
+            spreadsheetEngine.clearHistory()
+            
+            // Restore sheet states if present in Room
+            try {
+                val storedSheets = sheetDao.getSheetsForFile(uri.toString())
+                for (stored in storedSheets) {
+                    if (stored.sheetIndex in spreadsheetEngine.sheets.indices) {
+                        val targetSheet = spreadsheetEngine.sheets[stored.sheetIndex]
+                        targetSheet.zoom = stored.zoom
+                        targetSheet.scrollX = stored.scrollX
+                        targetSheet.scrollY = stored.scrollY
+                        if (stored.frozenRows > 0) targetSheet.frozenRows = stored.frozenRows
+                        if (stored.frozenCols > 0) targetSheet.frozenCols = stored.frozenCols
+                    }
+                }
+            } catch (_: Throwable) {}
+
+            updateUndoRedoState()
             _gridRefreshTrigger.value += 1
             
             // Add or update recent file
@@ -332,6 +549,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateCell(row: Int, col: Int, value: String) {
+        val currentVal = spreadsheetEngine.getCellFormulaOrValue(row, col)
+        if (currentVal != value) {
+            val colName = spreadsheetEngine.getColumnName(col)
+            spreadsheetEngine.pushUndo("Edit $colName${row + 1}")
+            updateUndoRedoState()
+        }
         viewModelScope.launch {
             withContext(Dispatchers.Default) {
                 spreadsheetEngine.setCell(row, col, value)
@@ -367,18 +590,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val headerName = spreadsheetEngine.getColumnHeaderName(col)
         
         val settings = appSettings.value
+
+        fun formatErrorForTts(err: String): String = when (err) {
+            "#SPILL!" -> "Spill error. Overlapping cells contain data."
+            "#CIRCULAR!" -> "Circular reference error"
+            "#REF!" -> "Reference error"
+            "#N/A", "#N/A!" -> "Value not available"
+            "#DIV/0!" -> "Divide by zero error"
+            "#NAME?" -> "Invalid name error"
+            "#VALUE!" -> "Invalid value error"
+            else -> err
+        }
         
         val cellDescription: String = if (value.isEmpty() && formula.isEmpty()) {
             if (settings.speakEmptyCells) "Empty" else ""
-        } else if (value == "#SPILL!") {
-            "Spill error. Overlapping cells contain data."
-        } else if (value == "#CIRCULAR!") {
-            "Circular reference error"
+        } else if (value.startsWith("#")) {
+            formatErrorForTts(value)
         } else {
             if (settings.speakFormulas && formula.startsWith("=")) {
                 val spokenFormula = formula.substring(1).replace(":", " to ")
-                if (value.isNotEmpty()) {
-                    "Formula equals $spokenFormula, evaluates to $value"
+                val spokenVal = if (value.startsWith("#")) formatErrorForTts(value) else value
+                if (spokenVal.isNotEmpty()) {
+                    "Formula equals $spokenFormula, evaluates to $spokenVal"
                 } else {
                     "Formula equals $spokenFormula"
                 }
@@ -426,47 +659,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sortColumn(col: Int, ascending: Boolean) {
+        val colHeader = spreadsheetEngine.getColumnHeaderName(col)
+        val dir = if (ascending) "ascending" else "descending"
+        spreadsheetEngine.pushUndo("Sort $colHeader $dir")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.sortColumn(col, ascending)
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            val colHeader = spreadsheetEngine.getColumnHeaderName(col)
-            val dir = if (ascending) "ascending" else "descending"
             ttsManager.speak("Sorted $colHeader $dir")
         }
     }
 
     fun clearColumn(col: Int) {
+        val colLetter = spreadsheetEngine.getColumnName(col)
+        spreadsheetEngine.pushUndo("Clear Column $colLetter")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.clearColumn(col)
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            val colLetter = spreadsheetEngine.getColumnName(col)
             ttsManager.speak("Column $colLetter cleared.")
         }
     }
 
     fun clearRow(row: Int) {
+        val rowNum = row + 1
+        spreadsheetEngine.pushUndo("Clear Row $rowNum")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.clearRow(row)
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            val rowNum = row + 1
             ttsManager.speak("Row $rowNum cleared.")
         }
     }
 
     fun deleteRow(row: Int) {
+        val rowNum = row + 1
+        spreadsheetEngine.pushUndo("Delete Row $rowNum")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.deleteRow(row)
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            val rowNum = row + 1
             ttsManager.speak("Row $rowNum deleted.")
         }
     }
 
     fun insertRow(row: Int) {
+        spreadsheetEngine.pushUndo("Insert Row ${row + 1}")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.insertRow(row)
             _gridRefreshTrigger.value += 1
@@ -476,15 +719,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun insertRowAbove(row: Int) {
-        viewModelScope.launch {
-            spreadsheetEngine.insertRow(row)
-            _gridRefreshTrigger.value += 1
-            autoSaveCurrentFile()
-            ttsManager.speak("Inserted row above ${row + 1}")
-        }
+        insertRow(row)
     }
 
     fun insertRowBelow(row: Int) {
+        spreadsheetEngine.pushUndo("Insert Row ${row + 2}")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.insertRow(row + 1)
             _gridRefreshTrigger.value += 1
@@ -494,6 +734,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun insertBannerAbove(row: Int, onEdit: (Pair<Int, Int>) -> Unit) {
+        spreadsheetEngine.pushUndo("Insert Banner")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.insertRow(row)
             spreadsheetEngine.mergeRange(row, 0, row, spreadsheetEngine.maxCol - 1)
@@ -506,8 +748,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun insertBannerBelow(row: Int, onEdit: (Pair<Int, Int>) -> Unit) {
+        val targetRow = row + 1
+        spreadsheetEngine.pushUndo("Insert Banner")
+        updateUndoRedoState()
         viewModelScope.launch {
-            val targetRow = row + 1
             spreadsheetEngine.insertRow(targetRow)
             spreadsheetEngine.mergeRange(targetRow, 0, targetRow, spreadsheetEngine.maxCol - 1)
             spreadsheetEngine.setCell(targetRow, 0, "New Banner")
@@ -519,6 +763,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun convertRowToBanner(row: Int) {
+        spreadsheetEngine.pushUndo("Convert to Banner")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.mergeRange(row, 0, row, spreadsheetEngine.maxCol - 1)
             _gridRefreshTrigger.value += 1
@@ -528,6 +774,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun unmergeBanner(row: Int) {
+        spreadsheetEngine.pushUndo("Unmerge Banner")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.unmergeRow(row)
             _gridRefreshTrigger.value += 1
@@ -537,6 +785,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setHeaderRow(row: Int) {
+        spreadsheetEngine.pushUndo("Set Header Row")
+        spreadsheetEngine.setHeaderRow(row)
+        updateUndoRedoState()
         viewModelScope.launch {
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
@@ -545,14 +796,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearHeaderRow(row: Int) {
+        spreadsheetEngine.pushUndo("Clear Header Row")
+        spreadsheetEngine.clearHeaderRow(row)
+        updateUndoRedoState()
         viewModelScope.launch {
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
-            ttsManager.speak("Cleared header row")
+            ttsManager.speak("Cleared header row ${row + 1}")
         }
     }
 
     fun setHeaderRowColor(color: Int?) {
+        spreadsheetEngine.pushUndo("Header Color")
+        updateUndoRedoState()
         viewModelScope.launch {
             spreadsheetEngine.setHeaderRowColor(color)
             _gridRefreshTrigger.value += 1
@@ -584,13 +840,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (editingCell != null) {
             onUpdateEditingText?.invoke(text)
         } else if (selectedCell != null) {
+            val (r, c) = selectedCell
+            val colName = spreadsheetEngine.getColumnName(c)
+            spreadsheetEngine.pushUndo("Voice input $colName${r + 1}")
+            updateUndoRedoState()
             viewModelScope.launch {
-                spreadsheetEngine.setCell(selectedCell.first, selectedCell.second, text)
+                spreadsheetEngine.setCell(r, c, text)
                 _gridRefreshTrigger.value += 1
                 autoSaveCurrentFile()
                 if (appSettings.value.speakAfterEditing) {
-                    val colName = spreadsheetEngine.getColumnName(selectedCell.second)
-                    val rowNum = selectedCell.first + 1
+                    val rowNum = r + 1
                     ttsManager.speak("$colName$rowNum: $text")
                 }
             }
@@ -679,15 +938,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
         if (text.isNotEmpty() || copiedCellBgColor != null || copiedCellTextColor != null) {
+            spreadsheetEngine.pushUndo("Paste into $cellName")
             if (text.isNotEmpty()) {
-                updateCell(row, col, text)
+                spreadsheetEngine.setCell(row, col, text)
             }
             if (copiedCellBgColor != null) {
-                setCellColor(row, col, copiedCellBgColor)
+                spreadsheetEngine.setCellColor(row, col, copiedCellBgColor)
             }
             if (copiedCellTextColor != null) {
-                setCellTextColor(row, col, copiedCellTextColor)
+                spreadsheetEngine.setCellTextColor(row, col, copiedCellTextColor)
             }
+            updateUndoRedoState()
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
             ttsManager.speak("Pasted into $cellName")
         } else {
             ttsManager.speak("Clipboard is empty")
@@ -695,11 +958,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setCellColor(r: Int, c: Int, color: Int?) {
-        spreadsheetEngine.setCellColor(r, c, color)
-        _gridRefreshTrigger.value += 1
-        autoSaveCurrentFile()
         val colName = spreadsheetEngine.getColumnName(c)
         val cellName = "$colName${r + 1}"
+        spreadsheetEngine.pushUndo("Background color $cellName")
+        spreadsheetEngine.setCellColor(r, c, color)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
         if (color != null) {
             ttsManager.speak("Background color set for $cellName")
         } else {
@@ -708,11 +973,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setCellTextColor(r: Int, c: Int, color: Int?) {
-        spreadsheetEngine.setCellTextColor(r, c, color)
-        _gridRefreshTrigger.value += 1
-        autoSaveCurrentFile()
         val colName = spreadsheetEngine.getColumnName(c)
         val cellName = "$colName${r + 1}"
+        spreadsheetEngine.pushUndo("Text color $cellName")
+        spreadsheetEngine.setCellTextColor(r, c, color)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
         if (color != null) {
             ttsManager.speak("Text color set for $cellName")
         } else {
@@ -721,11 +988,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setColumnColor(c: Int, color: Int?) {
-        spreadsheetEngine.setColumnColor(c, color)
-        _gridRefreshTrigger.value += 1
-        autoSaveCurrentFile()
         val colName = spreadsheetEngine.getColumnName(c)
         val headerName = spreadsheetEngine.getColumnHeaderName(c)
+        spreadsheetEngine.pushUndo("Column color $colName")
+        spreadsheetEngine.setColumnColor(c, color)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
         if (color != null) {
             ttsManager.speak("Background color set for column $colName $headerName")
         } else {
@@ -734,11 +1003,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setColumnTextColor(c: Int, color: Int?) {
-        spreadsheetEngine.setColumnTextColor(c, color)
-        _gridRefreshTrigger.value += 1
-        autoSaveCurrentFile()
         val colName = spreadsheetEngine.getColumnName(c)
         val headerName = spreadsheetEngine.getColumnHeaderName(c)
+        spreadsheetEngine.pushUndo("Column text color $colName")
+        spreadsheetEngine.setColumnTextColor(c, color)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
         if (color != null) {
             ttsManager.speak("Text color set for column $colName $headerName")
         } else {
@@ -747,10 +1018,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setRowColor(r: Int, color: Int?) {
+        val rowNum = r + 1
+        spreadsheetEngine.pushUndo("Row color $rowNum")
         spreadsheetEngine.setRowColor(r, color)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
-        val rowNum = r + 1
         if (color != null) {
             ttsManager.speak("Background color set for row $rowNum")
         } else {
@@ -759,10 +1032,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setRowTextColor(r: Int, color: Int?) {
+        val rowNum = r + 1
+        spreadsheetEngine.pushUndo("Row text color $rowNum")
         spreadsheetEngine.setRowTextColor(r, color)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
-        val rowNum = r + 1
         if (color != null) {
             ttsManager.speak("Text color set for row $rowNum")
         } else {
@@ -773,14 +1048,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteCell(row: Int, col: Int) {
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
-        updateCell(row, col, "")
-        setCellColor(row, col, null)
-        setCellTextColor(row, col, null)
+        spreadsheetEngine.pushUndo("Delete $cellName")
+        spreadsheetEngine.setCell(row, col, "")
+        spreadsheetEngine.setCellColor(row, col, null)
+        spreadsheetEngine.setCellTextColor(row, col, null)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
         ttsManager.speak("Deleted cell $cellName")
     }
 
     fun undo() {
         val desc = spreadsheetEngine.undo()
+        updateUndoRedoState()
         if (desc != null) {
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
@@ -792,6 +1072,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun redo() {
         val desc = spreadsheetEngine.redo()
+        updateUndoRedoState()
         if (desc != null) {
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
@@ -802,36 +1083,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun fillDown(startR: Int, startC: Int, endR: Int, endC: Int) {
+        spreadsheetEngine.pushUndo("Fill Down")
         spreadsheetEngine.fillDown(startR, startC, endR, endC)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak("Filled down")
     }
 
     fun fillRight(startR: Int, startC: Int, endR: Int, endC: Int) {
+        spreadsheetEngine.pushUndo("Fill Right")
         spreadsheetEngine.fillRight(startR, startC, endR, endC)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak("Filled right")
     }
 
     fun pasteSpecial(targetR: Int, targetC: Int, sourceR: Int, sourceC: Int, mode: SpreadsheetEngine.PasteMode) {
+        spreadsheetEngine.pushUndo("Paste Special")
         spreadsheetEngine.pasteSpecial(targetR, targetC, sourceR, sourceC, mode)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak("Paste special applied")
     }
 
     fun findAndReplace(find: String, replace: String, matchCase: Boolean) {
+        spreadsheetEngine.pushUndo("Find and Replace")
         val count = spreadsheetEngine.findAndReplace(find, replace, matchCase)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak("Replaced $count occurrences")
     }
 
+    fun replaceSingleMatch(r: Int, c: Int, find: String, replace: String, matchCase: Boolean): Boolean {
+        val replaced = spreadsheetEngine.replaceSingleMatch(r, c, find, replace, matchCase)
+        if (replaced) {
+            updateUndoRedoState()
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Replaced in cell ${spreadsheetEngine.getColumnName(c)}${r + 1}")
+        }
+        return replaced
+    }
+
     fun setCellBold(r: Int, c: Int, bold: Boolean) {
         spreadsheetEngine.pushUndo("Toggle Bold")
         spreadsheetEngine.setCellBold(r, c, bold)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak(if (bold) "Bold applied" else "Bold removed")
@@ -840,6 +1141,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setCellItalic(r: Int, c: Int, italic: Boolean) {
         spreadsheetEngine.pushUndo("Toggle Italic")
         spreadsheetEngine.setCellItalic(r, c, italic)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak(if (italic) "Italic applied" else "Italic removed")
@@ -848,6 +1150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setCellAlignment(r: Int, c: Int, align: Int) {
         spreadsheetEngine.pushUndo("Change Alignment")
         spreadsheetEngine.setCellAlignment(r, c, align)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         val alignName = when(align) { 1 -> "Center"; 2 -> "Right"; else -> "Left" }
@@ -857,6 +1160,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setCellNumberFormat(r: Int, c: Int, fmt: String) {
         spreadsheetEngine.pushUndo("Change Number Format")
         spreadsheetEngine.setCellNumberFormat(r, c, fmt)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak("Format set to $fmt")
@@ -865,6 +1169,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setCellBorders(r: Int, c: Int, border: Int) {
         spreadsheetEngine.pushUndo("Change Borders")
         spreadsheetEngine.setCellBorders(r, c, border)
+        updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak("Borders updated")

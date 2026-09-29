@@ -14,6 +14,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.speaksheet.data.AppSettings
@@ -29,6 +31,18 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val voices by viewModel.ttsManager.availableVoices.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    val brandingBitmap = remember {
+        try {
+            val options = android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = 4 // Downsample 200KB image to 64dp thumbnail size
+            }
+            android.graphics.BitmapFactory.decodeResource(context.resources, com.speaksheet.R.drawable.canva_image, options)?.asImageBitmap()
+        } catch (_: Throwable) {
+            null
+        }
+    }
     
     var showVoiceDialog by remember { mutableStateOf(false) }
     var localSpeechRate by remember(settings.speechRate) { mutableFloatStateOf(settings.speechRate) }
@@ -69,14 +83,25 @@ fun SettingsScreen(
                             .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Image(
-                            painter = painterResource(com.speaksheet.R.drawable.canva_image),
-                            contentDescription = "App Icon & Branding",
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(12.dp)),
-                            contentScale = ContentScale.Crop
-                        )
+                        if (brandingBitmap != null) {
+                            Image(
+                                bitmap = brandingBitmap,
+                                contentDescription = "App Icon & Branding",
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Image(
+                                painter = painterResource(com.speaksheet.R.drawable.canva_image),
+                                contentDescription = "App Icon & Branding",
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(

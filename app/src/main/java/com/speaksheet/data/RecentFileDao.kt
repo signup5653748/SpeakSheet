@@ -27,6 +27,9 @@ interface RecentFileDao {
     @Query("DELETE FROM recent_files WHERE uri = :uri")
     suspend fun deleteRecentFileByUri(uri: String)
 
+    @Query("DELETE FROM recent_files WHERE uri LIKE 'sample://%'")
+    suspend fun deleteSampleFiles()
+
     @Transaction
     suspend fun upsertRecentFile(recentFile: RecentFile) {
         deleteByUriOrPath(recentFile.uri, recentFile.path)

@@ -37,33 +37,70 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
+import androidx.compose.material.icons.automirrored.filled.FormatAlignRight
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AttachMoney
+import androidx.compose.material.icons.filled.BorderAll
+import androidx.compose.material.icons.filled.BorderClear
+import androidx.compose.material.icons.filled.BorderOuter
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.FormatAlignCenter
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatColorText
+import androidx.compose.material.icons.filled.FormatItalic
 import androidx.compose.material.icons.filled.Functions
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Percent
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.South
+import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.VerticalAlignBottom
+import androidx.compose.material.icons.filled.VerticalAlignTop
+import androidx.compose.material.icons.filled.WrapText
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.*
@@ -73,6 +110,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -110,7 +148,11 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class CellLayoutCache(private val textMeasurer: TextMeasurer) {
-    private val cellCache = HashMap<Long, CachedCellLayout>()
+    private val cellCache = object : LinkedHashMap<Long, CachedCellLayout>(512, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, CachedCellLayout>?): Boolean {
+            return size > 600
+        }
+    }
     private val colHeaderCache = HashMap<Long, CachedHeaderLayout>()
     private val rowHeaderCache = HashMap<Long, CachedHeaderLayout>()
 
@@ -210,164 +252,188 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
 
 enum class ColorPickerTab { BACKGROUND, TEXT }
 
-sealed class ActionMenuTarget {
-    data class Cell(val r: Int, val c: Int) : ActionMenuTarget()
-    data class Column(val c: Int) : ActionMenuTarget()
-    data class Row(val r: Int) : ActionMenuTarget()
-    data class General(val c: Int, val r: Int) : ActionMenuTarget()
+val ACTION_MENU_TABS = listOf("Home", "Clipboard", "Insert", "View", "Formulas", "Data", "Row", "Column")
+const val TAB_INDEX_HOME = 0
+const val TAB_INDEX_CLIPBOARD = 1
+const val TAB_INDEX_INSERT = 2
+const val TAB_INDEX_VIEW = 3
+const val TAB_INDEX_FORMULAS = 4
+const val TAB_INDEX_DATA = 5
+const val TAB_INDEX_ROW = 6
+const val TAB_INDEX_COLUMN = 7
+
+fun getActionsForTab(
+    tabIndex: Int,
+    r: Int,
+    c: Int,
+    engine: SpreadsheetEngine,
+    settings: com.speaksheet.data.AppSettings
+): List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, String>> {
+    return when (tabIndex) {
+        TAB_INDEX_HOME -> listOf(
+            Triple(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.FormatBold, "toggle_bold"),
+            Triple(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.FormatItalic, "toggle_italic"),
+            Triple("Align left", Icons.AutoMirrored.Filled.FormatAlignLeft, "align_left"),
+            Triple("Align center", Icons.Default.FormatAlignCenter, "align_center"),
+            Triple("Align right", Icons.AutoMirrored.Filled.FormatAlignRight, "align_right"),
+            Triple(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.WrapText, "wrap_text"),
+            Triple("Cell color", Icons.Default.Palette, "cell_bg_color"),
+            Triple("Text color", Icons.Default.FormatColorText, "cell_text_color")
+        )
+        TAB_INDEX_CLIPBOARD -> listOf(
+            Triple("Edit cell", Icons.Default.Edit, "edit"),
+            Triple("Copy", Icons.Default.ContentCopy, "copy"),
+            Triple("Paste", Icons.Default.ContentPaste, "paste"),
+            Triple("Paste values", Icons.Default.ContentPaste, "paste_values"),
+            Triple("Paste formats", Icons.Default.ContentPaste, "paste_formats"),
+            Triple("Paste formulas", Icons.Default.ContentPaste, "paste_formulas"),
+            Triple("Fill down", Icons.Default.South, "fill_down"),
+            Triple("Fill right", Icons.AutoMirrored.Filled.ArrowForward, "fill_right")
+        )
+        TAB_INDEX_INSERT -> listOf(
+            Triple("Banner above", Icons.Default.Add, "insert_banner_above"),
+            Triple("Banner below", Icons.Default.Add, "insert_banner_below"),
+            Triple("To banner", Icons.Default.Edit, "convert_to_banner"),
+            Triple("Unmerge banner", Icons.Default.Clear, "unmerge_banner"),
+            Triple("Border: None", Icons.Default.BorderClear, "border_none"),
+            Triple("Border: All", Icons.Default.BorderAll, "border_all"),
+            Triple("Border: Outer", Icons.Default.BorderOuter, "border_outer"),
+            Triple("Clear cell", Icons.Default.Delete, "clear_cell")
+        )
+        TAB_INDEX_VIEW -> listOf(
+            Triple("Freeze row", Icons.Default.VerticalAlignTop, "freeze_top_row"),
+            Triple("Freeze col", Icons.Default.VerticalAlignBottom, "freeze_first_col"),
+            Triple("Freeze selected", Icons.Default.Lock, "freeze_selected"),
+            Triple("Unfreeze panes", Icons.Default.LockOpen, "unfreeze_panes"),
+            Triple(if (settings.showGridlines) "Hide grid" else "Show grid", Icons.Default.GridOn, "toggle_gridlines"),
+            Triple("Zoom", Icons.Default.ZoomIn, "zoom_controls"),
+            Triple("Banner color", Icons.Default.ColorLens, "banner_color"),
+            Triple("Header color", Icons.Default.Palette, "header_row_color")
+        )
+        TAB_INDEX_FORMULAS -> listOf(
+            Triple("=SUM", Icons.Default.Functions, "formula_sum"),
+            Triple("=AVERAGE", Icons.Default.Functions, "formula_avg"),
+            Triple("=COUNT", Icons.Default.Functions, "formula_count"),
+            Triple("=MIN", Icons.Default.Functions, "formula_min"),
+            Triple("=MAX", Icons.Default.Functions, "formula_max"),
+            Triple("=SORT", Icons.Default.Functions, "formula_sort"),
+            Triple("=IF", Icons.Default.Functions, "formula_if"),
+            Triple("=VLOOKUP", Icons.Default.Functions, "formula_vlookup")
+        )
+        TAB_INDEX_DATA -> listOf(
+            Triple("Sort A-Z", Icons.Default.ArrowUpward, "sort_asc"),
+            Triple("Sort Z-A", Icons.Default.ArrowDownward, "sort_desc"),
+            Triple("Filter", Icons.Default.FilterList, "filter"),
+            Triple("Find & Replace", Icons.Default.Search, "find_replace"),
+            Triple("Fmt: General", Icons.Default.TextFields, "fmt_general"),
+            Triple("Fmt: Number", Icons.Default.Tag, "fmt_number"),
+            Triple("Fmt: Currency", Icons.Default.AttachMoney, "fmt_currency"),
+            Triple("Fmt: Percent", Icons.Default.Percent, "fmt_percent")
+        )
+        TAB_INDEX_ROW -> listOf(
+            Triple("Insert above", Icons.Default.Add, "insert_row_above"),
+            Triple("Insert below", Icons.Default.Add, "insert_row_below"),
+            Triple("Delete row", Icons.Default.Delete, "delete_row"),
+            Triple("Clear row", Icons.Default.Clear, "clear_row"),
+            Triple("Row color", Icons.Default.Palette, "row_color"),
+            Triple("Row text color", Icons.Default.FormatColorText, "row_text_color"),
+            Triple(if (engine.isHeaderRow(r)) "Clear header" else "Set header", Icons.Default.Check, if (engine.isHeaderRow(r)) "clear_header_row" else "set_header_row"),
+            Triple("Speak row", Icons.AutoMirrored.Filled.VolumeUp, "speak_row")
+        )
+        else -> listOf(
+            Triple("Speak col", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
+            Triple("Col color", Icons.Default.Palette, "column_color"),
+            Triple("Clear col", Icons.Default.Clear, "clear_column"),
+            Triple("Delete col", Icons.Default.Delete, "delete_column"),
+            Triple("Fmt: Date", Icons.Default.CalendarToday, "fmt_date")
+        )
+    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ActionMenuBottomSheet(
-    initialTab: Int,
+fun SwipeableActionMenuStrip(
+    pagerState: PagerState,
     targetCell: Pair<Int, Int>,
     engine: SpreadsheetEngine,
     viewModel: MainViewModel,
-    onTabSelected: (Int) -> Unit,
-    onDismiss: () -> Unit,
-    onEditCell: (Pair<Int, Int>) -> Unit,
+    settings: com.speaksheet.data.AppSettings,
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    onEditCell: (Pair<Int, Int>, String?) -> Unit,
     onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
+    onOpenZoom: () -> Unit,
+    onOpenFindReplace: () -> Unit,
+    onOpenFilter: (Int) -> Unit,
     onConfirmClearCol: (Int) -> Unit,
     onConfirmClearRow: (Int) -> Unit,
     onConfirmDeleteRow: (Int) -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(initialTab) }
-    val tabs = listOf("Cell", "Format", "Banner", "Column", "Row")
     val context = LocalContext.current
     val (r, c) = targetCell
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState()
-    ) {
-        Column(
+    Column(modifier = Modifier.fillMaxWidth()) {
+        ScrollableTabRow(
+            selectedTabIndex = pagerState.currentPage,
+            edgePadding = 4.dp,
+            containerColor = Color.Transparent,
+            contentColor = GreenPrimary,
+            divider = {},
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 32.dp)
+                .height(38.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                tabs.forEachIndexed { index, tabName ->
-                    val isSelected = (selectedTab == index)
-                    Surface(
-                        onClick = {
-                            if (selectedTab != index) {
-                                selectedTab = index
-                                onTabSelected(index)
-                                viewModel.ttsManager.speak("$tabName tab selected")
+            ACTION_MENU_TABS.forEachIndexed { index, tabName ->
+                val isSelected = pagerState.currentPage == index
+                Tab(
+                    selected = isSelected,
+                    onClick = {
+                        if (pagerState.currentPage != index) {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(index)
                             }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) GreenPrimary else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .semantics {
-                                role = Role.Tab
-                                contentDescription = "$tabName tab, ${index + 1} of 5, ${if (isSelected) "selected" else "not selected"}"
-                            }
-                            .testTag("tab_${tabName.lowercase()}")
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = tabName,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-                                fontSize = 13.sp
-                            )
+                            viewModel.ttsManager.speak("$tabName tab selected")
                         }
-                    }
-                }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-            val actions = when (selectedTab) {
-                0 -> listOf(
-                    Triple("Edit", Icons.Default.Edit, "edit"),
-                    Triple("Copy", Icons.Default.ContentCopy, "copy"),
-                    Triple("Paste", Icons.Default.ContentPaste, "paste"),
-                    Triple("Paste values only", Icons.Default.ContentPaste, "paste_values"),
-                    Triple("Paste formats only", Icons.Default.ContentPaste, "paste_formats"),
-                    Triple("Paste formulas only", Icons.Default.ContentPaste, "paste_formulas"),
-                    Triple("Fill down", Icons.Default.Add, "fill_down"),
-                    Triple("Fill right", Icons.Default.Add, "fill_right"),
-                    Triple("Clear cell", Icons.Default.Clear, "clear_cell"),
-                    Triple("Speak cell", Icons.AutoMirrored.Filled.VolumeUp, "speak_cell")
-                )
-                1 -> listOf(
-                    Triple(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.Edit, "toggle_bold"),
-                    Triple(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.Edit, "toggle_italic"),
-                    Triple("Align left", Icons.Default.Check, "align_left"),
-                    Triple("Align center", Icons.Default.Check, "align_center"),
-                    Triple("Align right", Icons.Default.Check, "align_right"),
-                    Triple("Format: General", Icons.Default.Check, "fmt_general"),
-                    Triple("Format: Number", Icons.Default.Check, "fmt_number"),
-                    Triple("Format: Currency", Icons.Default.Check, "fmt_currency"),
-                    Triple("Format: Percent", Icons.Default.Check, "fmt_percent"),
-                    Triple("Format: Date", Icons.Default.Check, "fmt_date"),
-                    Triple("Border: None", Icons.Default.Clear, "border_none"),
-                    Triple("Border: All", Icons.Default.Check, "border_all"),
-                    Triple("Border: Outer", Icons.Default.Check, "border_outer"),
-                    Triple(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.Edit, "wrap_text"),
-                    Triple("Cell background color", Icons.Default.Check, "cell_bg_color"),
-                    Triple("Cell text color", Icons.Default.Check, "cell_text_color")
-                )
-                2 -> listOf(
-                    Triple("Insert banner above", Icons.Default.Add, "insert_banner_above"),
-                    Triple("Insert banner below", Icons.Default.Add, "insert_banner_below"),
-                    Triple("Convert to banner", Icons.Default.Edit, "convert_to_banner"),
-                    Triple("Unmerge banner", Icons.Default.Clear, "unmerge_banner"),
-                    Triple("Banner color", Icons.Default.Check, "banner_color"),
-                    Triple("Set header row", Icons.Default.Check, "set_header_row"),
-                    Triple("Clear header row", Icons.Default.Clear, "clear_header_row"),
-                    Triple("Header row color", Icons.Default.Check, "header_row_color")
-                )
-                3 -> listOf(
-                    Triple("Sort A-Z", Icons.Default.Check, "sort_asc"),
-                    Triple("Sort Z-A", Icons.Default.Check, "sort_desc"),
-                    Triple("Filter", Icons.Default.Check, "filter"),
-                    Triple("Freeze first column", Icons.Default.Check, "freeze_first_col"),
-                    Triple("Unfreeze column", Icons.Default.Clear, "unfreeze_col"),
-                    Triple("Column color", Icons.Default.Check, "column_color"),
-                    Triple("Speak column", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
-                    Triple("Clear column", Icons.Default.Clear, "clear_column"),
-                    Triple("Delete column", Icons.Default.Delete, "delete_column")
-                )
-                else -> listOf(
-                    Triple("Insert row above", Icons.Default.Add, "insert_row_above"),
-                    Triple("Insert row below", Icons.Default.Add, "insert_row_below"),
-                    Triple("Delete row", Icons.Default.Delete, "delete_row"),
-                    Triple("Freeze top row", Icons.Default.Check, "freeze_top_row"),
-                    Triple("Freeze up to selected", Icons.Default.Check, "freeze_selected"),
-                    Triple("Unfreeze row", Icons.Default.Clear, "unfreeze_row"),
-                    Triple("Row color", Icons.Default.Check, "row_color"),
-                    Triple("Row text color", Icons.Default.Check, "row_text_color"),
-                    Triple("Speak row", Icons.AutoMirrored.Filled.VolumeUp, "speak_row"),
-                    Triple("Clear row", Icons.Default.Clear, "clear_row")
+                    },
+                    text = {
+                        Text(
+                            text = tabName,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.sp,
+                            color = if (isSelected) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    modifier = Modifier
+                        .semantics {
+                            role = androidx.compose.ui.semantics.Role.Tab
+                            selected = isSelected
+                            contentDescription = "$tabName tab, ${index + 1} of ${ACTION_MENU_TABS.size}, ${if (isSelected) "selected" else "not selected"}"
+                        }
+                        .testTag("tab_${tabName.lowercase()}")
                 )
             }
+        }
 
+        Spacer(Modifier.height(4.dp))
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(156.dp)
+        ) { page ->
+            val actions = getActionsForTab(page, r, c, engine, settings)
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = GridCells.Fixed(3),
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 380.dp)
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(actions, key = { it.third }) { action ->
                     Button(
                         onClick = {
-                            onDismiss()
                             when (action.third) {
-                                "edit" -> onEditCell(Pair(r, c))
+                                "edit" -> onEditCell(Pair(r, c), null)
                                 "copy" -> viewModel.copyCell(context, r, c)
                                 "paste" -> viewModel.pasteCell(context, r, c)
                                 "paste_values" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.VALUES_ONLY)
@@ -376,83 +442,97 @@ fun ActionMenuBottomSheet(
                                 "fill_down" -> viewModel.fillDown(r, c, minOf(r + 5, engine.maxRow - 1), c)
                                 "fill_right" -> viewModel.fillRight(r, c, r, minOf(c + 3, engine.maxCol - 1))
                                 "clear_cell" -> viewModel.deleteCell(r, c)
-                                "speak_cell" -> viewModel.speakCell(r, c)
 
                                 "toggle_bold" -> viewModel.setCellBold(r, c, !engine.getCellBold(r, c))
                                 "toggle_italic" -> viewModel.setCellItalic(r, c, !engine.getCellItalic(r, c))
                                 "align_left" -> viewModel.setCellAlignment(r, c, 0)
                                 "align_center" -> viewModel.setCellAlignment(r, c, 1)
                                 "align_right" -> viewModel.setCellAlignment(r, c, 2)
+                                "wrap_text" -> viewModel.toggleColumnWrap(c)
+                                "cell_bg_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
+                                "cell_text_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
+
+                                "insert_banner_above" -> viewModel.insertBannerAbove(r) { onEditCell(it, null) }
+                                "insert_banner_below" -> viewModel.insertBannerBelow(r) { onEditCell(it, null) }
+                                "convert_to_banner" -> viewModel.convertRowToBanner(r)
+                                "unmerge_banner" -> viewModel.unmergeBanner(r)
+                                "border_none" -> viewModel.setCellBorders(r, c, 0)
+                                "border_all" -> viewModel.setCellBorders(r, c, 1)
+                                "border_outer" -> viewModel.setCellBorders(r, c, 2)
+
+                                "freeze_top_row" -> viewModel.setFreezePanes(1, engine.frozenCols)
+                                "freeze_first_col" -> viewModel.setFreezePanes(engine.frozenRows, 1)
+                                "freeze_selected" -> viewModel.setFreezePanes(r + 1, c + 1)
+                                "unfreeze_panes" -> viewModel.setFreezePanes(0, 0)
+                                "toggle_gridlines" -> viewModel.updateSettings(settings.copy(showGridlines = !settings.showGridlines))
+                                "zoom_controls" -> onOpenZoom()
+                                "banner_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+                                "header_row_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+
+                                "formula_sum" -> onEditCell(Pair(r, c), "=SUM(")
+                                "formula_avg" -> onEditCell(Pair(r, c), "=AVERAGE(")
+                                "formula_count" -> onEditCell(Pair(r, c), "=COUNT(")
+                                "formula_min" -> onEditCell(Pair(r, c), "=MIN(")
+                                "formula_max" -> onEditCell(Pair(r, c), "=MAX(")
+                                "formula_sort" -> onEditCell(Pair(r, c), "=SORT(")
+                                "formula_if" -> onEditCell(Pair(r, c), "=IF(")
+                                "formula_vlookup" -> onEditCell(Pair(r, c), "=VLOOKUP(")
+
+                                "sort_asc" -> viewModel.sortColumn(c, true)
+                                "sort_desc" -> viewModel.sortColumn(c, false)
+                                "filter" -> onOpenFilter(c)
+                                "find_replace" -> onOpenFindReplace()
                                 "fmt_general" -> viewModel.setCellNumberFormat(r, c, "General")
                                 "fmt_number" -> viewModel.setCellNumberFormat(r, c, "Number")
                                 "fmt_currency" -> viewModel.setCellNumberFormat(r, c, "Currency")
                                 "fmt_percent" -> viewModel.setCellNumberFormat(r, c, "Percent")
                                 "fmt_date" -> viewModel.setCellNumberFormat(r, c, "Date")
-                                "border_none" -> viewModel.setCellBorders(r, c, 0)
-                                "border_all" -> viewModel.setCellBorders(r, c, 1)
-                                "border_outer" -> viewModel.setCellBorders(r, c, 2)
-                                "wrap_text" -> viewModel.toggleColumnWrap(c)
-                                "cell_bg_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
-                                "cell_text_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
-
-                                "insert_banner_above" -> viewModel.insertBannerAbove(r) { onEditCell(it) }
-                                "insert_banner_below" -> viewModel.insertBannerBelow(r) { onEditCell(it) }
-                                "convert_to_banner" -> viewModel.convertRowToBanner(r)
-                                "unmerge_banner" -> viewModel.unmergeBanner(r)
-                                "banner_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
-                                "set_header_row" -> viewModel.setHeaderRow(r)
-                                "clear_header_row" -> viewModel.clearHeaderRow(r)
-                                "header_row_color" -> onOpenColorPicker(ColorTarget.Row(0), ColorPickerTab.BACKGROUND)
-
-                                "sort_asc" -> viewModel.sortColumn(c, true)
-                                "sort_desc" -> viewModel.sortColumn(c, false)
-                                "filter" -> viewModel.ttsManager.speak("Filter active")
-                                "freeze_first_col" -> viewModel.setFreezePanes(engine.frozenRows, 1)
-                                "unfreeze_col" -> viewModel.setFreezePanes(engine.frozenRows, 0)
-                                "column_color" -> onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
-                                "speak_column" -> viewModel.speakColumn(c)
-                                "clear_column" -> onConfirmClearCol(c)
-                                "delete_column" -> viewModel.clearColumn(c)
 
                                 "insert_row_above" -> viewModel.insertRowAbove(r)
                                 "insert_row_below" -> viewModel.insertRowBelow(r)
-                                "freeze_top_row" -> viewModel.setFreezePanes(1, engine.frozenCols)
-                                "freeze_selected" -> viewModel.setFreezePanes(r + 1, c + 1)
-                                "unfreeze_row" -> viewModel.setFreezePanes(0, engine.frozenCols)
+                                "delete_row" -> onConfirmDeleteRow(r)
+                                "clear_row" -> onConfirmClearRow(r)
                                 "row_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
                                 "row_text_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.TEXT)
+                                "set_header_row" -> viewModel.setHeaderRow(r)
+                                "clear_header_row" -> viewModel.clearHeaderRow(r)
                                 "speak_row" -> viewModel.speakRow(r)
-                                "clear_row" -> onConfirmClearRow(r)
-                                "delete_row" -> onConfirmDeleteRow(r)
+
+                                "speak_column" -> viewModel.speakColumn(c)
+                                "column_color" -> onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
+                                "clear_column" -> onConfirmClearCol(c)
+                                "delete_column" -> viewModel.clearColumn(c)
                             }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
-                            .testTag("action_${action.third}"),
+                            .testTag("action_${action.third}")
+                            .semantics { contentDescription = action.first },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
-                        contentPadding = PaddingValues(12.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Start
+                            horizontalArrangement = Arrangement.Center
                         ) {
                             Icon(
                                 imageVector = action.second,
                                 contentDescription = null,
                                 tint = GreenPrimary,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(17.dp)
                             )
-                            Spacer(Modifier.width(10.dp))
+                            Spacer(Modifier.width(4.dp))
                             Text(
                                 text = action.first,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
+                                maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -464,17 +544,137 @@ fun ActionMenuBottomSheet(
 }
 
 @Composable
-fun ActionItem(text: String, onClick: () -> Unit) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 10.dp, horizontal = 4.dp),
-        fontSize = 14.sp,
-        fontWeight = FontWeight.Medium,
-        color = MaterialTheme.colorScheme.onSurface
-    )
+fun FindAndReplaceBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    replaceText: String,
+    onReplaceTextChange: (String) -> Unit,
+    matchCase: Boolean,
+    onMatchCaseToggle: () -> Unit,
+    matchCount: Int,
+    currentMatchIndex: Int,
+    onPrevMatch: () -> Unit,
+    onNextMatch: () -> Unit,
+    onReplace: () -> Unit,
+    onReplaceAll: () -> Unit,
+    onClose: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 4.dp,
+        modifier = Modifier.fillMaxWidth().testTag("find_replace_bar")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    placeholder = { Text("Find in sheet...", fontSize = 13.sp) },
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 44.dp)
+                        .testTag("find_input_field"),
+                    textStyle = MaterialTheme.typography.bodyMedium
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.testTag("find_match_counter")
+                ) {
+                    Text(
+                        text = if (matchCount == 0) "0/0" else "${currentMatchIndex + 1}/$matchCount",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (matchCount > 0) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
+                    )
+                }
+
+                FilledIconToggleButton(
+                    checked = matchCase,
+                    onCheckedChange = { onMatchCaseToggle() },
+                    modifier = Modifier.size(36.dp).testTag("find_match_case_toggle")
+                ) {
+                    Text("Aa", fontSize = 12.sp, fontWeight = if (matchCase) FontWeight.Bold else FontWeight.Normal)
+                }
+
+                IconButton(
+                    onClick = onPrevMatch,
+                    enabled = matchCount > 0,
+                    modifier = Modifier.size(36.dp).testTag("find_prev_match")
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous Match", modifier = Modifier.size(20.dp))
+                }
+
+                IconButton(
+                    onClick = onNextMatch,
+                    enabled = matchCount > 0,
+                    modifier = Modifier.size(36.dp).testTag("find_next_match")
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next Match", modifier = Modifier.size(20.dp))
+                }
+
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(36.dp).testTag("find_close_button")
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Close Find and Replace", modifier = Modifier.size(20.dp))
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedTextField(
+                    value = replaceText,
+                    onValueChange = onReplaceTextChange,
+                    placeholder = { Text("Replace with...", fontSize = 13.sp) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 44.dp)
+                        .testTag("replace_input_field"),
+                    textStyle = MaterialTheme.typography.bodyMedium
+                )
+
+                FilledTonalButton(
+                    onClick = onReplace,
+                    enabled = matchCount > 0 && query.isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.height(40.dp).testTag("btn_replace")
+                ) {
+                    Text("Replace", fontSize = 12.sp)
+                }
+
+                Button(
+                    onClick = onReplaceAll,
+                    enabled = matchCount > 0 && query.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.height(40.dp).testTag("btn_replace_all")
+                ) {
+                    Text("Replace all", fontSize = 12.sp)
+                }
+            }
+        }
+    }
 }
 
 sealed class ColorTarget {
@@ -497,10 +697,13 @@ fun SpreadsheetScreen(
     val fileName by viewModel.currentFileName.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val refreshTrigger by viewModel.gridRefreshTrigger.collectAsStateWithLifecycle()
+    val canUndo by viewModel.canUndo.collectAsStateWithLifecycle()
+    val canRedo by viewModel.canRedo.collectAsStateWithLifecycle()
     val engine = viewModel.spreadsheetEngine
     val context = LocalContext.current
     val density = LocalDensity.current.density
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     
     var selectedCell by remember { mutableStateOf<Pair<Int, Int>?>(Pair(0, 0)) }
     var editingCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -509,8 +712,67 @@ fun SpreadsheetScreen(
     var showZoomControlsMenu by remember { mutableStateOf(false) }
     var showColumnMenu by remember { mutableStateOf<Int?>(null) }
     var showRowMenu by remember { mutableStateOf<Int?>(null) }
-    var actionMenuTarget by remember { mutableStateOf<ActionMenuTarget?>(null) }
     var colorPickerState by remember { mutableStateOf<ColorPickerState?>(null) }
+
+    val initialTab = settings.lastActionMenuTab.coerceIn(0, ACTION_MENU_TABS.lastIndex)
+    val pagerState = rememberPagerState(
+        initialPage = initialTab,
+        pageCount = { ACTION_MENU_TABS.size }
+    )
+
+    var showFindReplace by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf("") }
+    var replaceQuery by remember { mutableStateOf("") }
+    var matchCase by remember { mutableStateOf(false) }
+    var currentMatchIndex by remember { mutableIntStateOf(0) }
+
+    var showSheetsDialog by remember { mutableStateOf(false) }
+    var sheetToRename by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    var sheetRenameInput by remember { mutableStateOf("") }
+    var sheetToDelete by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    var showAddSheetDialog by remember { mutableStateOf(false) }
+    var newSheetNameInput by remember { mutableStateOf("") }
+
+    var filterColIndex by remember { mutableStateOf<Int?>(null) }
+    var filterSelectedValues by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    val matches = remember(findQuery, matchCase, refreshTrigger) {
+        if (findQuery.isEmpty()) emptyList() else engine.findMatches(findQuery, matchCase)
+    }
+
+    LaunchedEffect(pagerState.currentPage) {
+        viewModel.updateLastActionMenuTab(pagerState.currentPage)
+    }
+
+    LaunchedEffect(showColumnMenu) {
+        showColumnMenu?.let { col ->
+            pagerState.animateScrollToPage(TAB_INDEX_COLUMN)
+            viewModel.ttsManager.speak("Column tab selected for column ${engine.getColumnName(col)}")
+            showColumnMenu = null
+        }
+    }
+
+    LaunchedEffect(showRowMenu) {
+        showRowMenu?.let { row ->
+            pagerState.animateScrollToPage(TAB_INDEX_ROW)
+            viewModel.ttsManager.speak("Row tab selected for row ${row + 1}")
+            showRowMenu = null
+        }
+    }
+
+    LaunchedEffect(showMenuForCell) {
+        showMenuForCell?.let { cell ->
+            pagerState.animateScrollToPage(TAB_INDEX_HOME)
+            viewModel.ttsManager.speak("Home tab selected for cell ${engine.getColumnName(cell.second)}${cell.first + 1}")
+            showMenuForCell = null
+        }
+    }
+
+    LaunchedEffect(findQuery, matchCase) {
+        if (findQuery.isNotEmpty()) {
+            viewModel.ttsManager.speak(if (matches.isEmpty()) "No matches found" else "${matches.size} matches found")
+        }
+    }
     
     val currentFileUri by viewModel.currentFileUri.collectAsStateWithLifecycle()
     var showRenameDialog by remember { mutableStateOf(false) }
@@ -521,6 +783,21 @@ fun SpreadsheetScreen(
     var deleteRowConfirm by remember { mutableStateOf<Int?>(null) }
     var showDeleteModeChooser by remember { mutableStateOf(false) }
     var showLanguagePicker by remember { mutableStateOf(false) }
+
+    val isCsv = fileName.endsWith(".csv", ignoreCase = true)
+    val exportMimeType = if (isCsv) "text/csv" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    val saveAsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(exportMimeType)
+    ) { destinationUri ->
+        if (destinationUri != null) {
+            viewModel.exportToUri(destinationUri) { success, message ->
+                coroutineScope.launch {
+                    snackbarHostState.showSnackbar(message)
+                }
+            }
+        }
+    }
 
     val speechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -546,6 +823,8 @@ fun SpreadsheetScreen(
 
     // Pure image/PDF-like canvas scale-transform zoom
     var userZoom by remember { mutableFloatStateOf(1.0f) }
+    val zoomPercent by remember { derivedStateOf { (userZoom * 100).roundToInt() } }
+    val isZoomed by remember { derivedStateOf { zoomPercent != 100 } }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     var lastTapTimestamp by remember { mutableLongStateOf(0L) }
     var lastTapPosition by remember { mutableStateOf(Offset.Zero) }
@@ -616,7 +895,7 @@ fun SpreadsheetScreen(
         { r: Int, c: Int, text: String, availableWidthPx: Float ->
             val pad = 5f * density
             val maxTextW = (availableWidthPx - 2 * pad).roundToInt().coerceAtLeast(1)
-            val style = if (r == 0) headerRowStyle else textStyle
+            val style = if (engine.isHeaderRow(r)) headerRowStyle else textStyle
             val res = textMeasurer.measure(
                 text = text,
                 style = style,
@@ -638,6 +917,7 @@ fun SpreadsheetScreen(
         val headerH = 32f * density
         val contentViewW = (viewW - headerW).coerceAtLeast(100f)
         val contentViewH = (viewH - headerH).coerceAtLeast(100f)
+        engine.checkAutoExtend(offset.x, offset.y, contentViewW, contentViewH, zoom)
         val contentW = engine.totalWidthPx * zoom
         val contentH = engine.totalHeightPx * zoom
         val margin = 48f * density
@@ -675,7 +955,7 @@ fun SpreadsheetScreen(
             32f * density + ((if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f) - 32f * density) / 2f
         )
     ) {
-        val clampedZoom = newZoom.coerceIn(0.7f, 3.0f)
+        val clampedZoom = newZoom.coerceIn(0.20f, 3.0f)
         if (userZoom == clampedZoom) return
         val oldZoom = userZoom
         userZoom = clampedZoom
@@ -705,25 +985,19 @@ fun SpreadsheetScreen(
         applyZoom(newZoom, Offset(pivotX, pivotY))
     }
 
-    // Smooth navigation with clear landing feedback mapped to current scale & offset
-    fun moveSelection(deltaRow: Int, deltaCol: Int) {
-        val current = selectedCell ?: Pair(0, 0)
-        val newR = (current.first + deltaRow).coerceIn(0, engine.maxRow - 1)
-        val newC = (current.second + deltaCol).coerceIn(0, engine.maxCol - 1)
-        selectedCell = Pair(newR, newC)
-        
+    fun scrollToCell(targetR: Int, targetC: Int) {
         val headerW = if (settings.showRowNumbers) 44f * density else 0f
         val headerH = 32f * density
-        val cellLeftUnscaled = engine.getColOffsetPx(newC)
-        val cellRightUnscaled = cellLeftUnscaled + engine.getColWidthPx(newC)
-        val cellTopUnscaled = engine.getRowOffsetPx(newR)
-        val cellBottomUnscaled = cellTopUnscaled + engine.getRowHeightPx(newR)
+        val cellLeftUnscaled = engine.getColOffsetPx(targetC)
+        val cellRightUnscaled = cellLeftUnscaled + engine.getColWidthPx(targetC)
+        val cellTopUnscaled = engine.getRowOffsetPx(targetR)
+        val cellBottomUnscaled = cellTopUnscaled + engine.getRowHeightPx(targetR)
 
         val viewW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 1000f
         val viewH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f
         val contentViewW = (viewW - headerW).coerceAtLeast(100f)
         val contentViewH = (viewH - headerH).coerceAtLeast(100f)
-        
+
         val curPan = animPanOffset.value
         val cellScreenLeft = headerW + curPan.x + cellLeftUnscaled * userZoom
         val cellScreenRight = headerW + curPan.x + cellRightUnscaled * userZoom
@@ -734,21 +1008,21 @@ fun SpreadsheetScreen(
         val margin = 40f * density
         var targetPanX = curPan.x
         var targetPanY = curPan.y
-        
+
         if (cellScreenLeft < headerW + margin) {
             targetPanX = margin - cellLeftUnscaled * userZoom
         } else if (cellScreenRight > viewW - margin) {
             targetPanX = contentViewW - margin - cellRightUnscaled * userZoom
         }
-        
+
         if (cellScreenTop < headerH + margin) {
             targetPanY = margin - cellTopUnscaled * userZoom
         } else if (cellScreenBottom > viewH - margin) {
             targetPanY = contentViewH - margin - cellBottomUnscaled * userZoom
         }
-        
+
         val clampedPan = clampPan(Offset(targetPanX, targetPanY), userZoom)
-        
+
         scrollJob?.cancel()
         scrollJob = coroutineScope.launch {
             animPanOffset.animateTo(
@@ -756,14 +1030,24 @@ fun SpreadsheetScreen(
                 animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
             )
         }
-        
+    }
+
+    // Smooth navigation with clear landing feedback mapped to current scale & offset
+    fun moveSelection(deltaRow: Int, deltaCol: Int) {
+        val current = selectedCell ?: Pair(0, 0)
+        val newR = (current.first + deltaRow).coerceIn(0, engine.maxRow - 1)
+        val newC = (current.second + deltaCol).coerceIn(0, engine.maxCol - 1)
+        selectedCell = Pair(newR, newC)
+        scrollToCell(newR, newC)
         viewModel.speakCell(newR, newC)
         triggerHaptic()
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            TopAppBar(
+            Column {
+                TopAppBar(
                 title = { 
                     Column(
                         modifier = Modifier
@@ -783,9 +1067,9 @@ fun SpreadsheetScreen(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        if (userZoom != 1.0f) {
+                        if (isZoomed) {
                             Text(
-                                text = "Zoom: ${(userZoom * 100).roundToInt()}%",
+                                text = "Zoom: $zoomPercent%",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = GreenPrimary
                             )
@@ -801,37 +1085,39 @@ fun SpreadsheetScreen(
                     // Undo Button
                     IconButton(
                         onClick = { viewModel.undo() },
-                        enabled = engine.canUndo,
+                        enabled = canUndo,
                         modifier = Modifier
                             .size(48.dp)
                             .testTag("top_bar_undo_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Refresh,
+                            imageVector = Icons.AutoMirrored.Filled.Undo,
                             contentDescription = "Undo",
-                            tint = if (engine.canUndo) GreenPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            tint = if (canUndo) GreenPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                         )
                     }
 
                     // Redo Button
                     IconButton(
                         onClick = { viewModel.redo() },
-                        enabled = engine.canRedo,
+                        enabled = canRedo,
                         modifier = Modifier
                             .size(48.dp)
                             .testTag("top_bar_redo_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Refresh,
+                            imageVector = Icons.AutoMirrored.Filled.Redo,
                             contentDescription = "Redo",
-                            tint = if (engine.canRedo) GreenPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            tint = if (canRedo) GreenPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                         )
                     }
 
                     // Save document button
                     IconButton(
                         onClick = { showSaveConfirmDialog = true },
-                        modifier = Modifier.testTag("top_bar_save_button")
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("top_bar_save_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Save,
@@ -841,7 +1127,7 @@ fun SpreadsheetScreen(
                     }
 
                     // Quick Reset Zoom chip if zoomed
-                    if (userZoom != 1.0f) {
+                    if (isZoomed) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = GreenPrimary.copy(alpha = 0.15f),
@@ -862,7 +1148,7 @@ fun SpreadsheetScreen(
                                 )
                                 Spacer(Modifier.width(2.dp))
                                 Text(
-                                    text = "Reset ${(userZoom * 100).roundToInt()}%",
+                                    text = "Reset $zoomPercent%",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = GreenPrimary
@@ -889,14 +1175,35 @@ fun SpreadsheetScreen(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
                                         Spacer(Modifier.width(12.dp))
-                                        Text("Save Document", fontWeight = FontWeight.SemiBold)
+                                        Text("Quick Save (Downloads)", fontWeight = FontWeight.SemiBold)
                                     }
                                 },
                                 onClick = {
                                     showOptionsMenu = false
-                                    showSaveConfirmDialog = true
+                                    viewModel.saveDocument { success, pathOrError ->
+                                        coroutineScope.launch {
+                                            snackbarHostState.showSnackbar(
+                                                if (success) "Saved to device: $pathOrError" else "Save failed: $pathOrError"
+                                            )
+                                        }
+                                    }
                                 },
                                 modifier = Modifier.testTag("menu_save_document")
+                            )
+
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Spacer(Modifier.width(12.dp))
+                                        Text("Save As... (Choose Location)")
+                                    }
+                                },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    saveAsLauncher.launch(fileName)
+                                },
+                                modifier = Modifier.testTag("menu_save_as_document")
                             )
 
                             DropdownMenuItem(
@@ -928,6 +1235,54 @@ fun SpreadsheetScreen(
                                     viewModel.openNewSpreadsheet()
                                 },
                                 modifier = Modifier.testTag("menu_new_spreadsheet")
+                            )
+
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                            Spacer(Modifier.width(12.dp))
+                                            Text("Sheets", fontWeight = FontWeight.SemiBold)
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = GreenPrimary.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = "${engine.sheets.size}",
+                                                color = GreenPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    showSheetsDialog = true
+                                },
+                                modifier = Modifier.testTag("menu_sheets")
+                            )
+
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Spacer(Modifier.width(12.dp))
+                                        Text("Find & Replace", fontWeight = FontWeight.SemiBold)
+                                    }
+                                },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    showFindReplace = true
+                                },
+                                modifier = Modifier.testTag("menu_find_and_replace")
                             )
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -1038,7 +1393,63 @@ fun SpreadsheetScreen(
                     containerColor = MaterialTheme.colorScheme.background
                 )
             )
-        },
+
+            if (showFindReplace) {
+                FindAndReplaceBar(
+                    query = findQuery,
+                    onQueryChange = {
+                        findQuery = it
+                        currentMatchIndex = 0
+                    },
+                    replaceText = replaceQuery,
+                    onReplaceTextChange = { replaceQuery = it },
+                    matchCase = matchCase,
+                    onMatchCaseToggle = {
+                        matchCase = !matchCase
+                        currentMatchIndex = 0
+                    },
+                    matchCount = matches.size,
+                    currentMatchIndex = currentMatchIndex,
+                    onPrevMatch = {
+                        if (matches.isNotEmpty()) {
+                            currentMatchIndex = if (currentMatchIndex - 1 < 0) matches.size - 1 else currentMatchIndex - 1
+                            val (mr, mc) = matches[currentMatchIndex]
+                            selectedCell = Pair(mr, mc)
+                            scrollToCell(mr, mc)
+                            viewModel.ttsManager.speak("Match ${currentMatchIndex + 1} of ${matches.size}: cell ${engine.getColumnName(mc)}${mr + 1}, ${engine.getCellValue(mr, mc)}")
+                        }
+                    },
+                    onNextMatch = {
+                        if (matches.isNotEmpty()) {
+                            currentMatchIndex = (currentMatchIndex + 1) % matches.size
+                            val (mr, mc) = matches[currentMatchIndex]
+                            selectedCell = Pair(mr, mc)
+                            scrollToCell(mr, mc)
+                            viewModel.ttsManager.speak("Match ${currentMatchIndex + 1} of ${matches.size}: cell ${engine.getColumnName(mc)}${mr + 1}, ${engine.getCellValue(mr, mc)}")
+                        }
+                    },
+                    onReplace = {
+                        if (matches.isNotEmpty() && findQuery.isNotEmpty()) {
+                            val currentMatch = matches.getOrNull(currentMatchIndex)
+                            if (currentMatch != null) {
+                                viewModel.replaceSingleMatch(currentMatch.first, currentMatch.second, findQuery, replaceQuery, matchCase)
+                            }
+                        }
+                    },
+                    onReplaceAll = {
+                        if (findQuery.isNotEmpty()) {
+                            viewModel.findAndReplace(findQuery, replaceQuery, matchCase)
+                        }
+                    },
+                    onClose = {
+                        showFindReplace = false
+                        findQuery = ""
+                        replaceQuery = ""
+                    }
+                )
+            }
+        }
+    },
         bottomBar = {
             Surface(
                 modifier = Modifier
@@ -1212,18 +1623,52 @@ fun SpreadsheetScreen(
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Speak Cell", modifier = Modifier.size(18.dp))
                             }
-                            FilledTonalIconButton(
-                                onClick = { actionMenuTarget = ActionMenuTarget.General(curCol, curRow) },
-                                modifier = Modifier.size(38.dp).testTag("action_column_menu")
-                            ) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "Column Options", modifier = Modifier.size(18.dp))
-                            }
                         }
                     }
 
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                        thickness = 0.5.dp
+                        thickness = 0.5.dp,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+
+                    // Swipeable Action Menu Strip
+                    SwipeableActionMenuStrip(
+                        pagerState = pagerState,
+                        targetCell = Pair(curRow, curCol),
+                        engine = engine,
+                        viewModel = viewModel,
+                        settings = settings,
+                        coroutineScope = coroutineScope,
+                        onEditCell = { cellPair, initialFormula ->
+                            editingCell = cellPair
+                            if (initialFormula != null) {
+                                engine.setCell(cellPair.first, cellPair.second, initialFormula)
+                            }
+                        },
+                        onOpenColorPicker = { target, tab ->
+                            colorPickerState = ColorPickerState(target, tab)
+                        },
+                        onOpenZoom = {
+                            showZoomControlsMenu = true
+                        },
+                        onOpenFindReplace = {
+                            showFindReplace = true
+                        },
+                        onOpenFilter = { col ->
+                            filterColIndex = col
+                            val dist = engine.getDistinctValuesForColumn(col)
+                            filterSelectedValues = dist.toSet()
+                        },
+                        onConfirmClearCol = { col -> clearColConfirm = col },
+                        onConfirmClearRow = { row -> clearRowConfirm = row },
+                        onConfirmDeleteRow = { row -> deleteRowConfirm = row }
+                    )
+
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                        thickness = 0.5.dp,
+                        modifier = Modifier.padding(vertical = 2.dp)
                     )
 
                     // Bottom Row: Navigation 4 Buttons (Left, Up, Down, Right) with smooth scrolling & clear landing
@@ -1677,6 +2122,16 @@ fun SpreadsheetScreen(
                                     )
                                 }
 
+                                // Find & Replace Match Highlight
+                                if (showFindReplace && matches.contains(Pair(r, c))) {
+                                    val isCurrent = matches.getOrNull(currentMatchIndex) == Pair(r, c)
+                                    drawRect(
+                                        color = if (isCurrent) Color(0xFFFF9800).copy(alpha = 0.55f) else Color(0xFFFFEB3B).copy(alpha = 0.4f),
+                                        topLeft = Offset(colLeft, rowTop),
+                                        size = Size(colWidth, rowHeight)
+                                    )
+                                }
+
                                 // Cell Border
                                 drawRect(
                                     color = gridColor,
@@ -1694,7 +2149,7 @@ fun SpreadsheetScreen(
                                         right = colRight - pad,
                                         bottom = rowBottom - pad
                                     ) {
-                                        val isHeaderRow = r == 0
+                                        val isHeaderRow = engine.isHeaderRow(r)
                                         val isWrapped = engine.isWrapEnabled(c)
                                         val cellTextColorInt = engine.getCellTextColor(r, c)
                                         val rowTextColorInt = engine.getRowTextColor(r)
@@ -2173,40 +2628,6 @@ fun SpreadsheetScreen(
             }
         )
     }
-    
-    // Tabbed Action Menu Bottom Sheet
-    actionMenuTarget?.let { target ->
-        val (r, c) = when (target) {
-            is ActionMenuTarget.Cell -> Pair(target.r, target.c)
-            is ActionMenuTarget.Column -> Pair(selectedCell?.first ?: 0, target.c)
-            is ActionMenuTarget.Row -> Pair(target.r, selectedCell?.second ?: 0)
-            is ActionMenuTarget.General -> Pair(target.r, target.c)
-        }
-        val initialTab = when (target) {
-            is ActionMenuTarget.Cell -> 0
-            is ActionMenuTarget.Column -> 2
-            is ActionMenuTarget.Row -> 3
-            is ActionMenuTarget.General -> settings.lastActionMenuTab.coerceIn(0, 3)
-        }
-
-        ActionMenuBottomSheet(
-            initialTab = initialTab,
-            targetCell = Pair(r, c),
-            engine = engine,
-            viewModel = viewModel,
-            onTabSelected = { tabIdx ->
-                viewModel.updateLastActionMenuTab(tabIdx)
-            },
-            onDismiss = { actionMenuTarget = null },
-            onEditCell = { cellPair -> editingCell = cellPair },
-            onOpenColorPicker = { colorTarget, tab ->
-                colorPickerState = ColorPickerState(colorTarget, tab)
-            },
-            onConfirmClearCol = { col -> clearColConfirm = col },
-            onConfirmClearRow = { row -> clearRowConfirm = row },
-            onConfirmDeleteRow = { row -> deleteRowConfirm = row }
-        )
-    }
 
     // Unified Color Picker Dialog (Background & Text with Preset & Custom Options)
     colorPickerState?.let { state ->
@@ -2234,26 +2655,62 @@ fun SpreadsheetScreen(
     if (showSaveConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showSaveConfirmDialog = false },
-            title = { Text("Update File") },
-            text = { Text("Do you want to update the file?") },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Save, contentDescription = null, tint = GreenPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Save Document to Device")
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Do you want to store '$fileName' on your device?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "• Save to Downloads: Quick save directly into your device's Downloads directory.\n• Choose Location: Open file picker to save anywhere (Documents, SD Card, etc.).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
             confirmButton = {
                 Button(
                     onClick = {
                         showSaveConfirmDialog = false
-                        viewModel.saveDocument()
+                        viewModel.saveDocument { success, pathOrError ->
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar(
+                                    if (success) "Saved to device: $pathOrError" else "Save failed: $pathOrError"
+                                )
+                            }
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
                     modifier = Modifier.testTag("confirm_save_yes_button")
                 ) {
-                    Text("Yes")
+                    Text("Save to Downloads")
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { showSaveConfirmDialog = false },
-                    modifier = Modifier.testTag("confirm_save_cancel_button")
-                ) {
-                    Text("Cancel")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            showSaveConfirmDialog = false
+                            saveAsLauncher.launch(fileName)
+                        },
+                        modifier = Modifier.testTag("confirm_save_choose_location_button")
+                    ) {
+                        Text("Choose Location")
+                    }
+                    TextButton(
+                        onClick = { showSaveConfirmDialog = false },
+                        modifier = Modifier.testTag("confirm_save_cancel_button")
+                    ) {
+                        Text("Cancel")
+                    }
                 }
             }
         )
@@ -2512,7 +2969,7 @@ fun SpreadsheetScreen(
                     ) {
                         FilledTonalIconButton(
                             onClick = {
-                                applyZoom((userZoom - 0.15f).coerceIn(0.7f, 3.0f))
+                                applyZoom((userZoom - 0.15f).coerceIn(0.20f, 3.0f))
                             },
                             modifier = Modifier.testTag("dialog_zoom_out_button")
                         ) {
@@ -2522,8 +2979,8 @@ fun SpreadsheetScreen(
                         Slider(
                             value = userZoom,
                             onValueChange = { applyZoom(it) },
-                            valueRange = 0.7f..3.0f,
-                            steps = 22,
+                            valueRange = 0.20f..3.0f,
+                            steps = 28,
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(horizontal = 8.dp)
@@ -2536,7 +2993,7 @@ fun SpreadsheetScreen(
 
                         FilledTonalIconButton(
                             onClick = {
-                                applyZoom((userZoom + 0.15f).coerceIn(0.7f, 3.0f))
+                                applyZoom((userZoom + 0.15f).coerceIn(0.20f, 3.0f))
                             },
                             modifier = Modifier.testTag("dialog_zoom_in_button")
                         ) {
@@ -2556,7 +3013,7 @@ fun SpreadsheetScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { preset ->
+                            listOf(0.5f, 0.75f, 1.0f, 1.5f, 2.0f).forEach { preset ->
                                 val isCurrent = (userZoom * 100).roundToInt() == (preset * 100).roundToInt()
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
@@ -2579,16 +3036,39 @@ fun SpreadsheetScreen(
                         }
                     }
 
-                    // Quick Reset to 100% button
-                    OutlinedButton(
-                        onClick = { applyZoom(1.0f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("dialog_zoom_reset_button")
+                    // Action buttons: Fit to Screen & 100%
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Reset to 100%")
+                        OutlinedButton(
+                            onClick = {
+                                val headerW = if (settings.showRowNumbers) 44f * density else 0f
+                                val headerH = 32f * density
+                                val viewW = (if (viewportSize.width > 0) viewportSize.width.toFloat() else 1000f) - headerW
+                                val viewH = (if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f) - headerH
+                                val fitZoom = if (viewW > 0 && viewH > 0 && engine.totalWidthPx > 0 && engine.totalHeightPx > 0) {
+                                    minOf(viewW / engine.totalWidthPx, viewH / engine.totalHeightPx).coerceIn(0.20f, 1.0f)
+                                } else {
+                                    0.25f
+                                }
+                                applyZoom(fitZoom)
+                            },
+                            modifier = Modifier.weight(1f).testTag("dialog_zoom_fit_button")
+                        ) {
+                            Icon(Icons.Default.FitScreen, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Fit to Screen")
+                        }
+
+                        OutlinedButton(
+                            onClick = { applyZoom(1.0f) },
+                            modifier = Modifier.weight(1f).testTag("dialog_zoom_reset_button")
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("100%")
+                        }
                     }
                 }
             },
@@ -2599,6 +3079,370 @@ fun SpreadsheetScreen(
                     modifier = Modifier.testTag("dialog_zoom_done_button")
                 ) {
                     Text("Done")
+                }
+            }
+        )
+    }
+
+    // Sheets Management Dialog (Top-right menu only)
+    if (showSheetsDialog) {
+        AlertDialog(
+            onDismissRequest = { showSheetsDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Layers,
+                    contentDescription = null,
+                    tint = GreenPrimary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Sheets (${engine.sheets.size})", fontWeight = FontWeight.Bold)
+                    IconButton(
+                        onClick = {
+                            newSheetNameInput = "Sheet${engine.sheets.size + 1}"
+                            showAddSheetDialog = true
+                        },
+                        modifier = Modifier.testTag("dialog_add_sheet_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add sheet", tint = GreenPrimary)
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Tap to switch. Long-press to rename or delete.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(engine.sheets.size) { idx ->
+                            val sheet = engine.sheets[idx]
+                            val isActive = idx == engine.currentSheetIndex
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {
+                                            viewModel.switchSheet(idx)
+                                            showSheetsDialog = false
+                                        },
+                                        onLongClick = {
+                                            sheetToRename = Pair(idx, sheet.name)
+                                            sheetRenameInput = sheet.name
+                                        }
+                                    )
+                                    .testTag("sheet_item_$idx"),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isActive) GreenPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.Layers,
+                                            contentDescription = null,
+                                            tint = if (isActive) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                        Text(
+                                            text = sheet.name,
+                                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isActive) GreenPrimary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    if (isActive) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = GreenPrimary
+                                        ) {
+                                            Text(
+                                                text = "Active",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    } else {
+                                        IconButton(
+                                            onClick = {
+                                                sheetToDelete = Pair(idx, sheet.name)
+                                            },
+                                            modifier = Modifier.size(28.dp).testTag("delete_sheet_btn_$idx")
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Delete sheet",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showSheetsDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("dialog_sheets_done_button")
+                ) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // Add Sheet Dialog
+    if (showAddSheetDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddSheetDialog = false },
+            title = { Text("Add New Sheet") },
+            text = {
+                OutlinedTextField(
+                    value = newSheetNameInput,
+                    onValueChange = { newSheetNameInput = it },
+                    label = { Text("Sheet Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("add_sheet_name_input")
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newSheetNameInput.isNotBlank()) {
+                            viewModel.addSheet(newSheetNameInput.trim())
+                        }
+                        showAddSheetDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("confirm_add_sheet_button")
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSheetDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Rename Sheet Dialog
+    sheetToRename?.let { target ->
+        AlertDialog(
+            onDismissRequest = { sheetToRename = null },
+            title = { Text("Rename Sheet") },
+            text = {
+                OutlinedTextField(
+                    value = sheetRenameInput,
+                    onValueChange = { sheetRenameInput = it },
+                    label = { Text("Sheet Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("rename_sheet_name_input")
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (sheetRenameInput.isNotBlank()) {
+                            viewModel.renameSheet(target.first, sheetRenameInput.trim())
+                        }
+                        sheetToRename = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    modifier = Modifier.testTag("confirm_rename_sheet_button")
+                ) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { sheetToRename = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Delete Sheet Confirmation Dialog
+    sheetToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { sheetToDelete = null },
+            title = { Text("Delete Sheet?") },
+            text = { Text("Are you sure you want to delete sheet \"${target.second}\"?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteSheet(target.first)
+                        sheetToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_sheet_button")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { sheetToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Functional Column Filter Dialog
+    filterColIndex?.let { col ->
+        val distinctValues = remember(col) {
+            val list = engine.getDistinctValuesForColumn(col).toMutableList()
+            // check if there are blank cells
+            var hasBlanks = false
+            for (r in 0 until engine.maxRow) {
+                if (!engine.isTitleRow(r) && !engine.isBannerRow(r) && !engine.isHeaderRow(r)) {
+                    if (engine.getCellValue(r, col).isEmpty()) {
+                        hasBlanks = true
+                        break
+                    }
+                }
+            }
+            if (hasBlanks) list.add("(Blanks)")
+            list
+        }
+
+        AlertDialog(
+            onDismissRequest = { filterColIndex = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.FilterList,
+                    contentDescription = null,
+                    tint = GreenPrimary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text("Filter: Column ${engine.getColumnName(col)}", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TextButton(
+                            onClick = { filterSelectedValues = distinctValues.toSet() },
+                            modifier = Modifier.testTag("filter_select_all_btn")
+                        ) {
+                            Text("Select All")
+                        }
+                        TextButton(
+                            onClick = { filterSelectedValues = emptySet() },
+                            modifier = Modifier.testTag("filter_clear_all_btn")
+                        ) {
+                            Text("Clear All")
+                        }
+                    }
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 240.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(distinctValues) { valStr ->
+                            val isChecked = filterSelectedValues.contains(valStr)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        filterSelectedValues = if (isChecked) {
+                                            filterSelectedValues - valStr
+                                        } else {
+                                            filterSelectedValues + valStr
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isChecked,
+                                    onCheckedChange = { checked ->
+                                        filterSelectedValues = if (checked) {
+                                            filterSelectedValues + valStr
+                                        } else {
+                                            filterSelectedValues - valStr
+                                        }
+                                    },
+                                    colors = CheckboxDefaults.colors(checkedColor = GreenPrimary)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(valStr, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            val total = engine.clearColumnFilter()
+                            viewModel.ttsManager.speak("Filter cleared. Showing all $total rows.")
+                            filterColIndex = null
+                        },
+                        modifier = Modifier.testTag("filter_reset_button")
+                    ) {
+                        Text("Clear Filter")
+                    }
+                    Button(
+                        onClick = {
+                            val (visible, total) = engine.applyColumnFilter(col, filterSelectedValues)
+                            viewModel.ttsManager.speak("Showing $visible of $total rows.")
+                            filterColIndex = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                        modifier = Modifier.testTag("filter_apply_button")
+                    ) {
+                        Text("Apply")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { filterColIndex = null }) {
+                    Text("Cancel")
                 }
             }
         )
@@ -2852,25 +3696,41 @@ fun UnifiedColorPickerDialog(
                             }
                         }
                 ) {
+                    val hueBrush = remember {
+                        Brush.horizontalGradient(
+                            listOf(
+                                Color.Red,
+                                Color.Yellow,
+                                Color.Green,
+                                Color.Cyan,
+                                Color.Blue,
+                                Color.Magenta,
+                                Color.Red
+                            )
+                        )
+                    }
+                    val satBrush = remember {
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.White,
+                                Color.Transparent
+                            )
+                        )
+                    }
+
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val width = size.width
                         val height = size.height
-                        val stepsX = 50
-                        val stepsY = 25
-                        val stepW = width / stepsX
-                        val stepH = height / stepsY
 
-                        for (x in 0 until stepsX) {
-                            for (y in 0 until stepsY) {
-                                val h = (x.toFloat() / stepsX) * 360f
-                                val s = 1f - (y.toFloat() / stepsY)
-                                val cInt = android.graphics.Color.HSVToColor(floatArrayOf(h, s, value))
-                                drawRect(
-                                    color = Color(cInt),
-                                    topLeft = Offset(x * stepW, y * stepH),
-                                    size = Size(stepW + 1f, stepH + 1f)
-                                )
-                            }
+                        // 1. Horizontal hue spectrum
+                        drawRect(brush = hueBrush)
+
+                        // 2. Vertical saturation overlay (white to transparent)
+                        drawRect(brush = satBrush)
+
+                        // 3. Brightness/Value darkening overlay
+                        if (value < 1.0f) {
+                            drawRect(color = Color.Black.copy(alpha = (1.0f - value).coerceIn(0f, 1f)))
                         }
 
                         val thumbX = (hue / 360f) * width

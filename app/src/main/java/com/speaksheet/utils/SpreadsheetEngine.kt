@@ -22,15 +22,156 @@ import java.util.zip.ZipOutputStream
 
 class SpreadsheetEngine {
 
-    var maxRow = 50
-    var maxCol = 15
-    var frozenRows = 0
-    var frozenCols = 0
+    data class CellRange(
+        var startRow: Int,
+        var startCol: Int,
+        var endRow: Int,
+        var endCol: Int
+    ) {
+        fun contains(r: Int, c: Int): Boolean =
+            r in startRow..endRow && c in startCol..endCol
+
+        fun isTopLeft(r: Int, c: Int): Boolean =
+            r == startRow && c == startCol
+    }
+
+    data class CellData(
+        var raw: String = "",
+        var evaluated: String? = null
+    )
+
+    data class EngineState(
+        val cells: Map<Long, CellData>,
+        val cellColors: Map<Long, Int>,
+        val cellTextColors: Map<Long, Int>,
+        val cellBold: Map<Long, Boolean>,
+        val cellItalic: Map<Long, Boolean>,
+        val cellAlign: Map<Long, Int>,
+        val cellNumFmt: Map<Long, String>,
+        val cellBorders: Map<Long, Int>,
+        val rowColors: Map<Int, Int>,
+        val rowTextColors: Map<Int, Int>,
+        val columnColors: Map<Int, Int>,
+        val columnTextColors: Map<Int, Int>,
+        val maxRow: Int,
+        val maxCol: Int,
+        val mergedRanges: Set<CellRange>,
+        val headerRows: Set<Int>,
+        val description: String
+    )
+
+    data class SheetState(
+        var name: String = "Sheet1",
+        var maxRow: Int = 50,
+        var maxCol: Int = 15,
+        var frozenRows: Int = 0,
+        var frozenCols: Int = 0,
+        var zoom: Float = 1.0f,
+        var scrollX: Float = 0f,
+        var scrollY: Float = 0f,
+        val cells: HashMap<Long, CellData> = HashMap(),
+        val cellColors: HashMap<Long, Int> = HashMap(),
+        val cellTextColors: HashMap<Long, Int> = HashMap(),
+        val columnColors: HashMap<Int, Int> = HashMap(),
+        val columnTextColors: HashMap<Int, Int> = HashMap(),
+        val rowColors: HashMap<Int, Int> = HashMap(),
+        val rowTextColors: HashMap<Int, Int> = HashMap(),
+        val cellBold: HashMap<Long, Boolean> = HashMap(),
+        val cellItalic: HashMap<Long, Boolean> = HashMap(),
+        val cellAlign: HashMap<Long, Int> = HashMap(),
+        val cellNumFmt: HashMap<Long, String> = HashMap(),
+        val cellBorders: HashMap<Long, Int> = HashMap(),
+        var wrapEnabled: BooleanArray = BooleanArray(15),
+        val mergedRanges: HashSet<CellRange> = HashSet(),
+        val headerRows: HashSet<Int> = HashSet(),
+        val hiddenRows: HashSet<Int> = HashSet(),
+        val undoStack: ArrayDeque<EngineState> = ArrayDeque(),
+        val redoStack: ArrayDeque<EngineState> = ArrayDeque()
+    )
+
+    val sheets = ArrayList<SheetState>().apply { add(SheetState("Sheet1")) }
+    var currentSheetIndex = 0
+
+    val currentSheet: SheetState
+        get() = sheets.getOrElse(currentSheetIndex) { sheets.first() }
+
+    var maxRow: Int
+        get() = currentSheet.maxRow
+        set(value) { currentSheet.maxRow = value }
+
+    var maxCol: Int
+        get() = currentSheet.maxCol
+        set(value) { currentSheet.maxCol = value }
+
+    var frozenRows: Int
+        get() = currentSheet.frozenRows
+        set(value) { currentSheet.frozenRows = value }
+
+    var frozenCols: Int
+        get() = currentSheet.frozenCols
+        set(value) { currentSheet.frozenCols = value }
+
+    val cells: HashMap<Long, CellData>
+        get() = currentSheet.cells
+
+    val cellColors: HashMap<Long, Int>
+        get() = currentSheet.cellColors
+
+    val cellTextColors: HashMap<Long, Int>
+        get() = currentSheet.cellTextColors
+
+    val columnColors: HashMap<Int, Int>
+        get() = currentSheet.columnColors
+
+    val columnTextColors: HashMap<Int, Int>
+        get() = currentSheet.columnTextColors
+
+    val rowColors: HashMap<Int, Int>
+        get() = currentSheet.rowColors
+
+    val rowTextColors: HashMap<Int, Int>
+        get() = currentSheet.rowTextColors
+
+    val cellBold: HashMap<Long, Boolean>
+        get() = currentSheet.cellBold
+
+    val cellItalic: HashMap<Long, Boolean>
+        get() = currentSheet.cellItalic
+
+    val cellAlign: HashMap<Long, Int>
+        get() = currentSheet.cellAlign
+
+    val cellNumFmt: HashMap<Long, String>
+        get() = currentSheet.cellNumFmt
+
+    val cellBorders: HashMap<Long, Int>
+        get() = currentSheet.cellBorders
+
+    val mergedRanges: HashSet<CellRange>
+        get() = currentSheet.mergedRanges
+
+    val headerRows: HashSet<Int>
+        get() = currentSheet.headerRows
+
+    val hiddenRows: HashSet<Int>
+        get() = currentSheet.hiddenRows
+
+    var wrapEnabled: BooleanArray
+        get() = currentSheet.wrapEnabled
+        set(value) { currentSheet.wrapEnabled = value }
+
+    val undoStack: ArrayDeque<EngineState>
+        get() = currentSheet.undoStack
+
+    val redoStack: ArrayDeque<EngineState>
+        get() = currentSheet.redoStack
+
+    val canUndo: Boolean get() = undoStack.isNotEmpty()
+    val canRedo: Boolean get() = redoStack.isNotEmpty()
 
     val defaultRowHeightDp = 32f
     val defaultColWidthDp = 90f
 
-    private val cells = HashMap<Long, CellData>()
     private val cellRightAlignedCache = HashMap<Long, Boolean>()
     private val formulaCellKeys = HashSet<Long>()
     private val evaluatingCells = HashSet<Long>()
@@ -41,13 +182,6 @@ class SpreadsheetEngine {
     private var rowHeightsPx = FloatArray(0)
     private var colOffsetsPx = FloatArray(0)
     private var colWidthsDp = FloatArray(0)
-    private var wrapEnabled = BooleanArray(0)
-    private val cellColors = HashMap<Long, Int>()
-    private val cellTextColors = HashMap<Long, Int>()
-    private val columnColors = HashMap<Int, Int>()
-    private val columnTextColors = HashMap<Int, Int>()
-    private val rowColors = HashMap<Int, Int>()
-    private val rowTextColors = HashMap<Int, Int>()
     private var isFullLayoutDirty = true
     private val dirtyColumns = HashSet<Int>()
     private val dirtyRows = HashSet<Int>()
@@ -64,10 +198,85 @@ class SpreadsheetEngine {
     var totalHeightPx = 0f
         private set
 
-    data class CellData(
-        var raw: String = "",
-        var evaluated: String? = null
-    )
+    fun markStructureDirty() {
+        isFullLayoutDirty = true
+    }
+
+    fun checkAutoExtend(scrollX: Float, scrollY: Float, viewW: Float, viewH: Float, zoom: Float): Boolean {
+        if (zoom <= 0.01f || viewW <= 0f || viewH <= 0f) return false
+        val visibleRightPx = (-scrollX + viewW) / zoom
+        val visibleBottomPx = (-scrollY + viewH) / zoom
+        val screenDistWPx = viewW / zoom
+        val screenDistHPx = viewH / zoom
+
+        var changed = false
+        if (totalHeightPx > 0 && totalHeightPx - visibleBottomPx < screenDistHPx && maxRow < 1000) {
+            maxRow = minOf(maxRow + 25, 1000)
+            changed = true
+        }
+        if (totalWidthPx > 0 && totalWidthPx - visibleRightPx < screenDistWPx && maxCol < 50) {
+            maxCol = minOf(maxCol + 5, 50)
+            changed = true
+        }
+        if (changed) {
+            markStructureDirty()
+        }
+        return changed
+    }
+
+    fun getSheetNames(): List<String> = sheets.map { it.name }
+
+    fun getActiveSheetName(): String = currentSheet.name
+
+    fun addSheet(name: String = ""): Int {
+        val sheetName = if (name.isNotBlank()) name else {
+            var counter = sheets.size + 1
+            var candidate = "Sheet$counter"
+            while (sheets.any { it.name.equals(candidate, ignoreCase = true) }) {
+                counter++
+                candidate = "Sheet$counter"
+            }
+            candidate
+        }
+        val newSheet = SheetState(name = sheetName, maxRow = 50, maxCol = 15, wrapEnabled = BooleanArray(15))
+        sheets.add(newSheet)
+        switchSheet(sheets.lastIndex)
+        return sheets.lastIndex
+    }
+
+    fun switchSheet(index: Int): Boolean {
+        if (index in sheets.indices && index != currentSheetIndex) {
+            currentSheetIndex = index
+            clearCellCaches()
+            markStructureDirty()
+            recalculateAllFormulas()
+            return true
+        }
+        return false
+    }
+
+    fun renameSheet(index: Int, newName: String): Boolean {
+        if (index in sheets.indices && newName.isNotBlank()) {
+            sheets[index].name = newName
+            return true
+        }
+        return false
+    }
+
+    fun deleteSheet(index: Int): Boolean {
+        if (sheets.size <= 1) return false
+        if (index in sheets.indices) {
+            sheets.removeAt(index)
+            if (currentSheetIndex >= sheets.size) {
+                currentSheetIndex = sheets.size - 1
+            }
+            clearCellCaches()
+            markStructureDirty()
+            recalculateAllFormulas()
+            return true
+        }
+        return false
+    }
 
     private fun cellKey(r: Int, c: Int): Long = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
 
@@ -189,6 +398,10 @@ class SpreadsheetEngine {
         for (range in mergedRanges) {
             sb.append("${range.startRow},${range.startCol},${range.endRow},${range.endCol}\n")
         }
+        sb.append("[HEADER_ROWS]\n")
+        for (r in headerRows) {
+            sb.append("$r\n")
+        }
         return sb.toString()
     }
 
@@ -200,6 +413,7 @@ class SpreadsheetEngine {
         rowColors.clear()
         rowTextColors.clear()
         mergedRanges.clear()
+        headerRows.clear()
         var section = ""
         for (rawLine in content.lines()) {
             val line = rawLine.trim()
@@ -260,6 +474,11 @@ class SpreadsheetEngine {
                 if (r != null) {
                     mergedRanges.add(CellRange(r, 0, r, maxCol - 1))
                 }
+            } else if (section == "[HEADER_ROWS]" && parts.isNotEmpty()) {
+                val r = parts[0].trim().toIntOrNull()
+                if (r != null) {
+                    headerRows.add(r)
+                }
             }
         }
     }
@@ -282,28 +501,118 @@ class SpreadsheetEngine {
         return Pair((sKey ushr 32).toInt(), (sKey and 0xFFFFFFFFL).toInt())
     }
 
+    fun formatDisplayValue(raw: String, fmt: String): String {
+        if (raw.startsWith("#") || raw.isEmpty()) return raw
+        val clean = raw.trim().removePrefix("$").removeSuffix("%").replace(",", "")
+        val num = clean.toDoubleOrNull() ?: return raw
+        return when (fmt) {
+            "Currency" -> {
+                if (num < 0) "-$" + String.format(Locale.US, "%,.2f", -num)
+                else "$" + String.format(Locale.US, "%,.2f", num)
+            }
+            "Percent" -> {
+                val pct = if (num in -1.0..1.0 && num != 0.0) num * 100.0 else num
+                String.format(Locale.US, "%.1f%%", pct)
+            }
+            "Number" -> {
+                if (num == num.toLong().toDouble()) {
+                    String.format(Locale.US, "%,d", num.toLong())
+                } else {
+                    String.format(Locale.US, "%,.2f", num)
+                }
+            }
+            "Date" -> {
+                try {
+                    if (num > 100000000000L) {
+                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                        sdf.format(java.util.Date(num.toLong()))
+                    } else if (num in 1.0..100000.0) {
+                        val millis = (num - 25569.0) * 86400000.0
+                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                        sdf.format(java.util.Date(millis.toLong()))
+                    } else {
+                        raw
+                    }
+                } catch (_: Exception) {
+                    raw
+                }
+            }
+            else -> raw
+        }
+    }
+
     fun getCellValue(r: Int, c: Int): String {
         val key = cellKey(r, c)
         val cell = cells[key]
-        if (cell != null && cell.raw.isNotEmpty()) {
+        val rawVal = if (cell != null && cell.raw.isNotEmpty()) {
             if (!cell.raw.startsWith("=")) {
-                return cell.raw
+                cell.raw
+            } else {
+                cell.evaluated ?: run {
+                    if (!evaluatingCells.add(key)) {
+                        "#CIRCULAR!"
+                    } else {
+                        try {
+                            val eval = evaluateFormula(cell.raw, r, c)
+                            cell.evaluated = eval
+                            eval
+                        } finally {
+                            evaluatingCells.remove(key)
+                        }
+                    }
+                }
             }
-            cell.evaluated?.let { return it }
+        } else {
+            spillOutputs[key] ?: ""
+        }
+        val fmt = getCellNumberFormat(r, c)
+        return if (fmt != "General") formatDisplayValue(rawVal, fmt) else rawVal
+    }
 
-            if (!evaluatingCells.add(key)) {
-                return "#CIRCULAR!"
-            }
-            return try {
-                val eval = evaluateFormula(cell.raw, r, c)
-                cell.evaluated = eval
-                eval
-            } finally {
-                evaluatingCells.remove(key)
+    fun getDistinctValuesForColumn(c: Int): List<String> {
+        val set = LinkedHashSet<String>()
+        for (r in 0 until maxRow) {
+            if (!isTitleRow(r) && !isBannerRow(r) && !isHeaderRow(r)) {
+                val v = getCellValue(r, c)
+                if (v.isNotEmpty()) {
+                    set.add(v)
+                }
             }
         }
-        return spillOutputs[key] ?: ""
+        return set.toList()
     }
+
+    fun applyColumnFilter(c: Int, allowedValues: Set<String>): Pair<Int, Int> {
+        hiddenRows.clear()
+        var totalDataRows = 0
+        for (r in 0 until maxRow) {
+            if (!isTitleRow(r) && !isBannerRow(r) && !isHeaderRow(r)) {
+                totalDataRows++
+                val v = getCellValue(r, c)
+                val checkVal = if (v.isEmpty()) "(Blanks)" else v
+                if (!allowedValues.contains(checkVal) && !allowedValues.contains(v)) {
+                    hiddenRows.add(r)
+                }
+            }
+        }
+        isFullLayoutDirty = true
+        val visibleDataRows = (totalDataRows - hiddenRows.size).coerceAtLeast(0)
+        return Pair(visibleDataRows, totalDataRows)
+    }
+
+    fun clearColumnFilter(): Int {
+        hiddenRows.clear()
+        isFullLayoutDirty = true
+        var totalDataRows = 0
+        for (r in 0 until maxRow) {
+            if (!isTitleRow(r) && !isBannerRow(r) && !isHeaderRow(r)) {
+                totalDataRows++
+            }
+        }
+        return totalDataRows
+    }
+
+    fun isRowHidden(r: Int): Boolean = hiddenRows.contains(r)
 
     fun getCellFormulaOrValue(r: Int, c: Int): String {
         return cells[cellKey(r, c)]?.raw ?: ""
@@ -392,6 +701,8 @@ class SpreadsheetEngine {
         columnTextColors.clear()
         rowColors.clear()
         rowTextColors.clear()
+        mergedRanges.clear()
+        headerRows.clear()
         cellRightAlignedCache.clear()
         formulaCellKeys.clear()
         evaluatingCells.clear()
@@ -408,44 +719,6 @@ class SpreadsheetEngine {
         rowHeightsPx = FloatArray(0)
         colOffsetsPx = FloatArray(0)
         colWidthsDp = FloatArray(0)
-        isFullLayoutDirty = true
-    }
-
-    fun loadSampleData(title: String, data: List<List<String>>) {
-        cells.clear()
-        cellColors.clear()
-        cellTextColors.clear()
-        columnColors.clear()
-        columnTextColors.clear()
-        rowColors.clear()
-        rowTextColors.clear()
-        clearCellCaches()
-        var maxC = 0
-        data.forEachIndexed { r, rowValues ->
-            rowValues.forEachIndexed { c, value ->
-                if (value.isNotEmpty()) {
-                    setCell(r, c, value)
-                }
-                if (c > maxC) maxC = c
-            }
-        }
-        maxRow = maxOf(40, data.size + 10)
-        maxCol = maxOf(10, maxC + 3)
-        wrapEnabled = BooleanArray(maxCol)
-        frozenRows = 0
-        frozenCols = 0
-
-        if (title.contains("Sectioned Report", ignoreCase = true) || data.size > 20) {
-            setColumnWrap(0, true)
-            val bannerRowsList = listOf(10, 17, 24, 31)
-            val colors = listOf(0xFFFFF9C4.toInt(), 0xFFE3F2FD.toInt(), 0xFFE8F5E9.toInt(), 0xFFFFF3E0.toInt())
-            bannerRowsList.forEachIndexed { idx, br ->
-                if (br < maxRow) {
-                    setRowColor(br, colors[idx])
-                    mergeRange(br, 0, br, maxCol - 1)
-                }
-            }
-        }
         isFullLayoutDirty = true
     }
 
@@ -505,7 +778,13 @@ class SpreadsheetEngine {
     internal fun loadCSV(inputStream: InputStream) {
         cells.clear()
         cellColors.clear()
+        cellTextColors.clear()
         columnColors.clear()
+        columnTextColors.clear()
+        rowColors.clear()
+        rowTextColors.clear()
+        mergedRanges.clear()
+        headerRows.clear()
         clearCellCaches()
         val bytes = inputStream.readBytes()
         if (bytes.isEmpty()) return
@@ -547,41 +826,132 @@ class SpreadsheetEngine {
         isFullLayoutDirty = true
     }
 
-    private fun loadXLSX(inputStream: InputStream): Boolean {
-        cells.clear()
-        cellColors.clear()
-        columnColors.clear()
-        clearCellCaches()
-        val sharedStrings = ArrayList<String>()
-        val sheetBytes = HashMap<String, ByteArray>()
+    data class StyleRecord(
+        val fontBold: Boolean = false,
+        val fontItalic: Boolean = false,
+        val fontColor: Int? = null,
+        val fillColor: Int? = null,
+        val border: Int = 0,
+        val align: Int = 0,
+        val wrapText: Boolean = false,
+        val numFmt: String = "General"
+    )
 
-        try {
-            val zip = ZipInputStream(inputStream)
-            var entry: ZipEntry? = zip.nextEntry
-            while (entry != null) {
-                val entryName = entry.name
-                if (entryName == "xl/sharedStrings.xml") {
-                    parseSharedStrings(zip, sharedStrings)
-                } else if (entryName.startsWith("xl/worksheets/sheet") && entryName.endsWith(".xml")) {
-                    sheetBytes[entryName] = zip.readBytes()
-                } else if (entryName == "xl/speaksheet_colors.txt") {
-                    deserializeColors(String(zip.readBytes(), Charsets.UTF_8))
+    class OpenXmlStyles {
+        val cellXfs = ArrayList<StyleRecord>()
+    }
+
+    private fun parseStylesXml(stream: InputStream): OpenXmlStyles {
+        val result = OpenXmlStyles()
+        val factory = XmlPullParserFactory.newInstance()
+        val parser = factory.newPullParser()
+        parser.setInput(stream, "UTF-8")
+
+        val fonts = ArrayList<Triple<Boolean, Boolean, Int?>>() // bold, italic, color
+        val fills = ArrayList<Int?>() // color or null
+
+        var event = parser.eventType
+        var section = ""
+
+        var curFontBold = false
+        var curFontItalic = false
+        var curFontColor: Int? = null
+        var curFillColor: Int? = null
+
+        while (event != XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                XmlPullParser.START_TAG -> {
+                    when (parser.name) {
+                        "fonts" -> section = "fonts"
+                        "fills" -> section = "fills"
+                        "cellXfs" -> section = "cellXfs"
+                        "font" -> {
+                            curFontBold = false
+                            curFontItalic = false
+                            curFontColor = null
+                        }
+                        "b" -> if (section == "fonts") curFontBold = true
+                        "i" -> if (section == "fonts") curFontItalic = true
+                        "color" -> {
+                            if (section == "fonts") {
+                                val rgb = parser.getAttributeValue(null, "rgb")
+                                if (rgb != null && rgb.length in 6..8) {
+                                    val full = if (rgb.length == 6) "FF$rgb" else rgb
+                                    curFontColor = full.toLongOrNull(16)?.toInt()
+                                }
+                            }
+                        }
+                        "fgColor" -> {
+                            if (section == "fills") {
+                                val rgb = parser.getAttributeValue(null, "rgb")
+                                if (rgb != null && rgb.length in 6..8) {
+                                    val full = if (rgb.length == 6) "FF$rgb" else rgb
+                                    curFillColor = full.toLongOrNull(16)?.toInt()
+                                }
+                            }
+                        }
+                        "fill" -> {
+                            curFillColor = null
+                        }
+                        "xf" -> {
+                            if (section == "cellXfs") {
+                                val fontId = parser.getAttributeValue(null, "fontId")?.toIntOrNull() ?: 0
+                                val fillId = parser.getAttributeValue(null, "fillId")?.toIntOrNull() ?: 0
+                                val borderId = parser.getAttributeValue(null, "borderId")?.toIntOrNull() ?: 0
+                                val numFmtId = parser.getAttributeValue(null, "numFmtId")?.toIntOrNull() ?: 0
+
+                                val fontInfo = fonts.getOrNull(fontId) ?: Triple(false, false, null)
+                                val fillInfo = fills.getOrNull(fillId)
+
+                                val numFmt = when (numFmtId) {
+                                    1, 2, 3, 4 -> "Number"
+                                    5, 6, 7, 8, 44, 164 -> "Currency"
+                                    9, 10 -> "Percent"
+                                    14, 15, 16, 17, 22 -> "Date"
+                                    else -> "General"
+                                }
+
+                                result.cellXfs.add(
+                                    StyleRecord(
+                                        fontBold = fontInfo.first,
+                                        fontItalic = fontInfo.second,
+                                        fontColor = fontInfo.third,
+                                        fillColor = fillInfo,
+                                        border = if (borderId > 0) 1 else 0,
+                                        align = 0,
+                                        wrapText = false,
+                                        numFmt = numFmt
+                                    )
+                                )
+                            }
+                        }
+                        "alignment" -> {
+                            if (section == "cellXfs" && result.cellXfs.isNotEmpty()) {
+                                val lastIdx = result.cellXfs.size - 1
+                                val curXf = result.cellXfs[lastIdx]
+                                val horiz = parser.getAttributeValue(null, "horizontal") ?: ""
+                                val wrap = parser.getAttributeValue(null, "wrapText") == "1" || parser.getAttributeValue(null, "wrapText") == "true"
+                                val alignInt = when (horiz) {
+                                    "center" -> 1
+                                    "right" -> 2
+                                    else -> 0
+                                }
+                                result.cellXfs[lastIdx] = curXf.copy(align = alignInt, wrapText = wrap)
+                            }
+                        }
+                    }
                 }
-                zip.closeEntry()
-                entry = zip.nextEntry
+                XmlPullParser.END_TAG -> {
+                    when (parser.name) {
+                        "font" -> fonts.add(Triple(curFontBold, curFontItalic, curFontColor))
+                        "fill" -> fills.add(curFillColor)
+                        "fonts", "fills", "cellXfs" -> section = ""
+                    }
+                }
             }
-
-            val firstSheetBytes = sheetBytes["xl/worksheets/sheet1.xml"]
-                ?: sheetBytes.values.firstOrNull()
-
-            if (firstSheetBytes != null) {
-                parseSheetXml(firstSheetBytes.inputStream(), sharedStrings)
-                return true
-            }
-        } catch (_: Throwable) {
-            return false
+            event = parser.next()
         }
-        return false
+        return result
     }
 
     private fun parseSharedStrings(stream: InputStream, list: ArrayList<String>) {
@@ -617,7 +987,12 @@ class SpreadsheetEngine {
         }
     }
 
-    private fun parseSheetXml(stream: InputStream, sharedStrings: List<String>) {
+    private fun parseSheetXmlInto(
+        sheet: SheetState,
+        stream: InputStream,
+        sharedStrings: List<String>,
+        styles: OpenXmlStyles
+    ) {
         val factory = XmlPullParserFactory.newInstance()
         val parser = factory.newPullParser()
         parser.setInput(stream, "UTF-8")
@@ -625,10 +1000,11 @@ class SpreadsheetEngine {
         var eventType = parser.eventType
         var currentCellRef = ""
         var cellType = ""
+        var styleIdx = -1
         var inValue = false
         var inFormula = false
-        var cellText = StringBuilder()
-        var formulaText = StringBuilder()
+        val cellText = StringBuilder()
+        val formulaText = StringBuilder()
         var maxR = 0
         var maxC = 0
 
@@ -636,15 +1012,39 @@ class SpreadsheetEngine {
             when (eventType) {
                 XmlPullParser.START_TAG -> {
                     when (parser.name) {
+                        "pane" -> {
+                            val ySplit = parser.getAttributeValue(null, "ySplit")?.toIntOrNull() ?: 0
+                            val xSplit = parser.getAttributeValue(null, "xSplit")?.toIntOrNull() ?: 0
+                            sheet.frozenRows = ySplit
+                            sheet.frozenCols = xSplit
+                        }
+                        "mergeCell" -> {
+                            val ref = parser.getAttributeValue(null, "ref") ?: ""
+                            val parts = ref.split(":")
+                            if (parts.size == 2) {
+                                val start = parseCellReference(parts[0].trim())
+                                val end = parseCellReference(parts[1].trim())
+                                if (start != null && end != null) {
+                                    sheet.mergedRanges.add(
+                                        CellRange(
+                                            minOf(start.first, end.first),
+                                            minOf(start.second, end.second),
+                                            maxOf(start.first, end.first),
+                                            maxOf(start.second, end.second)
+                                        )
+                                    )
+                                }
+                            }
+                        }
                         "c" -> {
                             currentCellRef = parser.getAttributeValue(null, "r") ?: ""
                             cellType = parser.getAttributeValue(null, "t") ?: ""
+                            styleIdx = parser.getAttributeValue(null, "s")?.toIntOrNull() ?: -1
                             cellText.clear()
                             formulaText.clear()
                         }
-                        "v" -> {
+                        "v", "t" -> {
                             inValue = true
-                            cellText.clear()
                         }
                         "f" -> {
                             inFormula = true
@@ -653,22 +1053,19 @@ class SpreadsheetEngine {
                     }
                 }
                 XmlPullParser.TEXT -> {
-                    if (inValue) {
-                        cellText.append(parser.text)
-                    }
-                    if (inFormula) {
-                        formulaText.append(parser.text)
-                    }
+                    if (inValue) cellText.append(parser.text)
+                    if (inFormula) formulaText.append(parser.text)
                 }
                 XmlPullParser.END_TAG -> {
                     when (parser.name) {
-                        "v" -> inValue = false
+                        "v", "t" -> inValue = false
                         "f" -> inFormula = false
                         "c" -> {
                             if (currentCellRef.isNotEmpty()) {
                                 val coords = parseCellReference(currentCellRef)
                                 if (coords != null) {
                                     val (r, c) = coords
+                                    val key = cellKey(r, c)
                                     val finalVal = if (formulaText.isNotEmpty()) {
                                         "=" + formulaText.toString().trim()
                                     } else if (cellType == "s") {
@@ -681,7 +1078,30 @@ class SpreadsheetEngine {
                                     } else {
                                         cellText.toString()
                                     }
-                                    setCell(r, c, finalVal)
+                                    sheet.cells[key] = CellData(raw = finalVal)
+                                    if (finalVal.startsWith("=")) {
+                                        formulaCellKeys.add(key)
+                                    }
+
+                                    if (styleIdx in styles.cellXfs.indices) {
+                                        val st = styles.cellXfs[styleIdx]
+                                        if (st.fillColor != null) sheet.cellColors[key] = st.fillColor
+                                        if (st.fontColor != null) sheet.cellTextColors[key] = st.fontColor
+                                        if (st.fontBold) sheet.cellBold[key] = true
+                                        if (st.fontItalic) sheet.cellItalic[key] = true
+                                        if (st.align != 0) sheet.cellAlign[key] = st.align
+                                        if (st.border != 0) sheet.cellBorders[key] = st.border
+                                        if (st.numFmt != "General") sheet.cellNumFmt[key] = st.numFmt
+                                        if (st.wrapText) {
+                                            if (c >= sheet.wrapEnabled.size) {
+                                                val newArr = BooleanArray(c + 1)
+                                                sheet.wrapEnabled.copyInto(newArr)
+                                                sheet.wrapEnabled = newArr
+                                            }
+                                            sheet.wrapEnabled[c] = true
+                                        }
+                                    }
+
                                     if (r > maxR) maxR = r
                                     if (c > maxC) maxC = c
                                 }
@@ -692,10 +1112,158 @@ class SpreadsheetEngine {
             }
             eventType = parser.next()
         }
-        maxRow = maxOf(30, maxR + 10).coerceAtMost(300)
-        maxCol = maxOf(10, maxC + 4).coerceAtMost(30)
-        wrapEnabled = BooleanArray(maxCol)
-        isFullLayoutDirty = true
+
+        sheet.maxRow = maxOf(30, maxR + 10).coerceAtMost(5000)
+        sheet.maxCol = maxOf(10, maxC + 4).coerceAtMost(200)
+        if (sheet.wrapEnabled.size < sheet.maxCol) {
+            val newArr = BooleanArray(sheet.maxCol)
+            sheet.wrapEnabled.copyInto(newArr)
+            sheet.wrapEnabled = newArr
+        }
+    }
+
+    fun loadXLSX(inputStream: InputStream): Boolean {
+        sheets.clear()
+        formulaCellKeys.clear()
+        evaluatingCells.clear()
+        spillOutputs.clear()
+        spillSources.clear()
+        cellRightAlignedCache.clear()
+        clearCellCaches()
+
+        val sharedStrings = ArrayList<String>()
+        val sheetBytes = HashMap<String, ByteArray>()
+        var workbookXmlBytes: ByteArray? = null
+        var workbookRelsBytes: ByteArray? = null
+        var stylesXmlBytes: ByteArray? = null
+        var legacyColors: String? = null
+
+        fun readEntryBytes(z: ZipInputStream): ByteArray {
+            val baos = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            var count: Int
+            while (z.read(buf).also { count = it } != -1) {
+                baos.write(buf, 0, count)
+            }
+            return baos.toByteArray()
+        }
+
+        try {
+            val zip = ZipInputStream(inputStream)
+            var entry: ZipEntry? = zip.nextEntry
+            while (entry != null) {
+                val entryName = entry.name
+                when {
+                    entryName == "xl/sharedStrings.xml" -> {
+                        parseSharedStrings(readEntryBytes(zip).inputStream(), sharedStrings)
+                    }
+                    entryName == "xl/workbook.xml" -> {
+                        workbookXmlBytes = readEntryBytes(zip)
+                    }
+                    entryName == "xl/_rels/workbook.xml.rels" -> {
+                        workbookRelsBytes = readEntryBytes(zip)
+                    }
+                    entryName == "xl/styles.xml" -> {
+                        stylesXmlBytes = readEntryBytes(zip)
+                    }
+                    entryName.startsWith("xl/worksheets/sheet") && entryName.endsWith(".xml") -> {
+                        sheetBytes[entryName] = readEntryBytes(zip)
+                    }
+                    entryName.startsWith("worksheets/sheet") && entryName.endsWith(".xml") -> {
+                        sheetBytes["xl/$entryName"] = readEntryBytes(zip)
+                    }
+                    entryName == "xl/speaksheet_colors.txt" -> {
+                        legacyColors = String(readEntryBytes(zip), Charsets.UTF_8)
+                    }
+                }
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+
+            val styles = if (stylesXmlBytes != null) parseStylesXml(stylesXmlBytes.inputStream()) else OpenXmlStyles()
+
+            data class SheetDef(val name: String, val rId: String)
+            val sheetDefs = ArrayList<SheetDef>()
+            if (workbookXmlBytes != null) {
+                val factory = XmlPullParserFactory.newInstance()
+                val parser = factory.newPullParser()
+                parser.setInput(workbookXmlBytes.inputStream(), "UTF-8")
+                var event = parser.eventType
+                while (event != XmlPullParser.END_DOCUMENT) {
+                    if (event == XmlPullParser.START_TAG && parser.name == "sheet") {
+                        val name = parser.getAttributeValue(null, "name") ?: "Sheet${sheetDefs.size + 1}"
+                        var rId: String? = null
+                        for (i in 0 until parser.attributeCount) {
+                            val attrName = parser.getAttributeName(i)
+                            if (attrName == "id" || attrName == "r:id" || attrName.endsWith(":id")) {
+                                rId = parser.getAttributeValue(i)
+                                break
+                            }
+                        }
+                        sheetDefs.add(SheetDef(name, rId ?: "rId${sheetDefs.size + 1}"))
+                    }
+                    event = parser.next()
+                }
+            }
+
+            val rIdToTarget = HashMap<String, String>()
+            if (workbookRelsBytes != null) {
+                val factory = XmlPullParserFactory.newInstance()
+                val parser = factory.newPullParser()
+                parser.setInput(workbookRelsBytes.inputStream(), "UTF-8")
+                var event = parser.eventType
+                while (event != XmlPullParser.END_DOCUMENT) {
+                    if (event == XmlPullParser.START_TAG && parser.name == "Relationship") {
+                        val id = parser.getAttributeValue(null, "Id") ?: ""
+                        var target = parser.getAttributeValue(null, "Target") ?: ""
+                        if (!target.startsWith("xl/")) {
+                            target = "xl/" + target.removePrefix("/")
+                        }
+                        if (id.isNotEmpty() && target.isNotEmpty()) {
+                            rIdToTarget[id] = target
+                        }
+                    }
+                    event = parser.next()
+                }
+            }
+
+            val sheetsToParse = ArrayList<Pair<String, ByteArray>>()
+            for (def in sheetDefs) {
+                val target = rIdToTarget[def.rId] ?: "xl/worksheets/sheet${sheetsToParse.size + 1}.xml"
+                val b = sheetBytes[target] ?: sheetBytes.entries.firstOrNull { it.key.endsWith(target.substringAfterLast("/")) }?.value
+                if (b != null) {
+                    sheetsToParse.add(Pair(def.name, b))
+                }
+            }
+
+            if (sheetsToParse.isEmpty()) {
+                val sortedKeys = sheetBytes.keys.sorted()
+                for ((idx, key) in sortedKeys.withIndex()) {
+                    sheetBytes[key]?.let {
+                        sheetsToParse.add(Pair("Sheet${idx + 1}", it))
+                    }
+                }
+            }
+
+            if (sheetsToParse.isEmpty()) return false
+
+            for (pair in sheetsToParse) {
+                val (sheetName, bytes) = pair
+                val sheetState = SheetState(name = sheetName)
+                parseSheetXmlInto(sheetState, bytes.inputStream(), sharedStrings, styles)
+                sheets.add(sheetState)
+            }
+
+            currentSheetIndex = 0
+            if (legacyColors != null) {
+                deserializeColors(legacyColors)
+            }
+            recalculateAllFormulas()
+            markStructureDirty()
+            return true
+        } catch (_: Throwable) {
+            return false
+        }
     }
 
     private fun parseCellReference(ref: String): Pair<Int, Int>? {
@@ -764,83 +1332,275 @@ class SpreadsheetEngine {
 
     fun saveXLSX(out: OutputStream) {
         val zip = ZipOutputStream(out)
-        
-        // Write simple workbook structure
+        val allSheets = if (sheets.isNotEmpty()) sheets else listOf(currentSheet)
+
+        // 1. Collect all styles across all sheets
+        // Fonts: (bold: Boolean, italic: Boolean, color: Int?)
+        val fontMap = LinkedHashMap<Triple<Boolean, Boolean, Int?>, Int>()
+        // default font
+        fontMap[Triple(false, false, null)] = 0
+
+        // Fills: color: Int?
+        val fillMap = LinkedHashMap<Int, Int>()
+        // fill 0 is none, fill 1 is gray125. custom fills start at 2
+
+        fun getNumFmtId(fmt: String): Int = when (fmt) {
+            "Number" -> 4
+            "Currency" -> 44
+            "Percent" -> 9
+            "Date" -> 14
+            else -> 0
+        }
+
+        data class StyleKey(
+            val fontId: Int,
+            val fillId: Int,
+            val borderId: Int,
+            val numFmtId: Int,
+            val align: Int,
+            val wrapText: Boolean
+        )
+
+        val xfList = ArrayList<StyleKey>()
+        // xf 0: default
+        xfList.add(StyleKey(0, 0, 0, 0, 0, false))
+        val xfMap = HashMap<StyleKey, Int>()
+        xfMap[xfList[0]] = 0
+
+        for (sheet in allSheets) {
+            for (r in 0 until sheet.maxRow) {
+                for (c in 0 until sheet.maxCol) {
+                    val key = cellKey(r, c)
+                    val raw = sheet.cells[key]?.raw ?: ""
+                    val hasColor = sheet.cellColors.containsKey(key) || sheet.columnColors.containsKey(c) || sheet.rowColors.containsKey(r)
+                    val hasTextColor = sheet.cellTextColors.containsKey(key) || sheet.columnTextColors.containsKey(c) || sheet.rowTextColors.containsKey(r)
+                    val isBold = sheet.cellBold[key] == true
+                    val isItalic = sheet.cellItalic[key] == true
+                    val align = sheet.cellAlign[key] ?: 0
+                    val numFmt = sheet.cellNumFmt[key] ?: "General"
+                    val border = sheet.cellBorders[key] ?: 0
+                    val isWrap = if (c in sheet.wrapEnabled.indices) sheet.wrapEnabled[c] else false
+
+                    if (raw.isNotEmpty() || hasColor || hasTextColor || isBold || isItalic || align != 0 || numFmt != "General" || border != 0 || isWrap) {
+                        val textColor = sheet.cellTextColors[key] ?: sheet.columnTextColors[c] ?: sheet.rowTextColors[r]
+                        val fontTriple = Triple(isBold, isItalic, textColor)
+                        val fontId = fontMap.getOrPut(fontTriple) { fontMap.size }
+
+                        val bgColor = sheet.cellColors[key] ?: sheet.columnColors[c] ?: sheet.rowColors[r]
+                        val fillId = if (bgColor != null) {
+                            fillMap.getOrPut(bgColor) { fillMap.size + 2 }
+                        } else {
+                            0
+                        }
+
+                        val numFmtId = getNumFmtId(numFmt)
+                        val borderId = if (border > 0) 1 else 0
+                        val styleKey = StyleKey(fontId, fillId, borderId, numFmtId, align, isWrap)
+                        if (!xfMap.containsKey(styleKey)) {
+                            val newXfId = xfList.size
+                            xfList.add(styleKey)
+                            xfMap[styleKey] = newXfId
+                        }
+                    }
+                }
+            }
+        }
+
+        // [Content_Types].xml
         zip.putNextEntry(ZipEntry("[Content_Types].xml"))
-        zip.write(
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        val ctXml = StringBuilder("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-</Types>""".toByteArray()
-        )
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+""")
+        for (i in allSheets.indices) {
+            ctXml.append("<Override PartName=\"/xl/worksheets/sheet${i + 1}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>\n")
+        }
+        ctXml.append("</Types>")
+        zip.write(ctXml.toString().toByteArray())
         zip.closeEntry()
 
+        // _rels/.rels
         zip.putNextEntry(ZipEntry("_rels/.rels"))
-        zip.write(
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        zip.write("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>""".toByteArray()
-        )
+</Relationships>""".toByteArray())
         zip.closeEntry()
 
+        // xl/_rels/workbook.xml.rels
         zip.putNextEntry(ZipEntry("xl/_rels/workbook.xml.rels"))
-        zip.write(
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        val wbRels = StringBuilder("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-</Relationships>""".toByteArray()
-        )
+""")
+        for (i in allSheets.indices) {
+            wbRels.append("<Relationship Id=\"rId${i + 1}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet${i + 1}.xml\"/>\n")
+        }
+        wbRels.append("<Relationship Id=\"rIdStyles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>\n")
+        wbRels.append("</Relationships>")
+        zip.write(wbRels.toString().toByteArray())
         zip.closeEntry()
 
+        // xl/workbook.xml
         zip.putNextEntry(ZipEntry("xl/workbook.xml"))
-        zip.write(
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets>
-</workbook>""".toByteArray()
-        )
+        val wbXml = StringBuilder("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets>
+""")
+        for (i in allSheets.indices) {
+            val sName = allSheets[i].name.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+            wbXml.append("<sheet name=\"$sName\" sheetId=\"${i + 1}\" r:id=\"rId${i + 1}\"/>\n")
+        }
+        wbXml.append("</sheets>\n</workbook>")
+        zip.write(wbXml.toString().toByteArray())
         zip.closeEntry()
 
-        zip.putNextEntry(ZipEntry("xl/worksheets/sheet1.xml"))
-        val sheetXml = StringBuilder("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>""")
-        
-        for (r in 0 until maxRow) {
-            var rowHasData = false
-            for (c in 0 until maxCol) {
-                if (getCellValue(r, c).isNotEmpty()) {
-                    rowHasData = true
-                    break
-                }
+        // xl/styles.xml
+        zip.putNextEntry(ZipEntry("xl/styles.xml"))
+        val stylesXml = StringBuilder("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+""")
+        // Fonts
+        stylesXml.append("<fonts count=\"${fontMap.size}\">\n")
+        for ((fontTriple, _) in fontMap) {
+            val (bold, italic, color) = fontTriple
+            stylesXml.append("<font>")
+            if (bold) stylesXml.append("<b/>")
+            if (italic) stylesXml.append("<i/>")
+            stylesXml.append("<sz val=\"11\"/><name val=\"Calibri\"/>")
+            if (color != null) {
+                val hex = String.format(Locale.ROOT, "%08X", color)
+                stylesXml.append("<color rgb=\"$hex\"/>")
             }
-            if (rowHasData) {
-                sheetXml.append("<row r=\"${r + 1}\">")
-                for (c in 0 until maxCol) {
-                    val raw = getCellFormulaOrValue(r, c)
-                    val disp = getCellValue(r, c)
-                    val ref = getColumnName(c) + (r + 1)
-                    if (raw.startsWith("=")) {
-                        sheetXml.append("<c r=\"$ref\"><f>${raw.removePrefix("=")}</f><v>$disp</v></c>")
-                    } else if (raw.toDoubleOrNull() != null) {
-                        sheetXml.append("<c r=\"$ref\"><v>$raw</v></c>")
-                    } else if (raw.isNotEmpty()) {
-                        sheetXml.append("<c r=\"$ref\" t=\"inlineStr\"><is><t>${raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")}</t></is></c>")
+            stylesXml.append("</font>\n")
+        }
+        stylesXml.append("</fonts>\n")
+
+        // Fills
+        val totalFills = 2 + fillMap.size
+        stylesXml.append("<fills count=\"$totalFills\">\n")
+        stylesXml.append("<fill><patternFill patternType=\"none\"/></fill>\n")
+        stylesXml.append("<fill><patternFill patternType=\"gray125\"/></fill>\n")
+        for ((colorInt, _) in fillMap) {
+            val hex = String.format(Locale.ROOT, "%08X", colorInt)
+            stylesXml.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"$hex\"/><bgColor indexed=\"64\"/></patternFill></fill>\n")
+        }
+        stylesXml.append("</fills>\n")
+
+        // Borders
+        stylesXml.append("""<borders count="2">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/></border>
+</borders>
+""")
+
+        // CellStyleXfs
+        stylesXml.append("<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>\n")
+
+        // CellXfs
+        stylesXml.append("<cellXfs count=\"${xfList.size}\">\n")
+        for (xf in xfList) {
+            val horiz = when (xf.align) {
+                1 -> "center"
+                2 -> "right"
+                else -> "left"
+            }
+            val applyFont = if (xf.fontId > 0) " applyFont=\"1\"" else ""
+            val applyFill = if (xf.fillId > 0) " applyFill=\"1\"" else ""
+            val applyBorder = if (xf.borderId > 0) " applyBorder=\"1\"" else ""
+            val applyNumFmt = if (xf.numFmtId > 0) " applyNumberFormat=\"1\"" else ""
+            stylesXml.append("<xf numFmtId=\"${xf.numFmtId}\" fontId=\"${xf.fontId}\" fillId=\"${xf.fillId}\" borderId=\"${xf.borderId}\" xfId=\"0\"$applyFont$applyFill$applyBorder$applyNumFmt>")
+            stylesXml.append("<alignment horizontal=\"$horiz\"${if (xf.wrapText) " wrapText=\"1\"" else ""}/>")
+            stylesXml.append("</xf>\n")
+        }
+        stylesXml.append("</cellXfs>\n</styleSheet>")
+        zip.write(stylesXml.toString().toByteArray())
+        zip.closeEntry()
+
+        // Worksheets: sheet1.xml, sheet2.xml, ...
+        for ((sheetIdx, sheet) in allSheets.withIndex()) {
+            zip.putNextEntry(ZipEntry("xl/worksheets/sheet${sheetIdx + 1}.xml"))
+            val sheetXml = StringBuilder("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+""")
+            // sheetViews for frozen panes & gridlines
+            sheetXml.append("<sheetViews><sheetView workbookViewId=\"0\" showGridLines=\"1\">")
+            if (sheet.frozenRows > 0 || sheet.frozenCols > 0) {
+                val topCell = getColumnName(sheet.frozenCols) + (sheet.frozenRows + 1)
+                sheetXml.append("<pane xSplit=\"${sheet.frozenCols}\" ySplit=\"${sheet.frozenRows}\" topLeftCell=\"$topCell\" activePane=\"bottomRight\" state=\"frozen\"/>")
+            }
+            sheetXml.append("</sheetView></sheetViews>\n")
+
+            // sheetData
+            sheetXml.append("<sheetData>\n")
+            for (r in 0 until sheet.maxRow) {
+                var rowHasData = false
+                for (c in 0 until sheet.maxCol) {
+                    val key = cellKey(r, c)
+                    if (sheet.cells[key]?.raw?.isNotEmpty() == true ||
+                        sheet.cellColors.containsKey(key) ||
+                        sheet.columnColors.containsKey(c) ||
+                        sheet.rowColors.containsKey(r) ||
+                        sheet.cellBold.containsKey(key) ||
+                        sheet.cellItalic.containsKey(key) ||
+                        sheet.cellAlign.containsKey(key) ||
+                        sheet.cellNumFmt.containsKey(key) ||
+                        sheet.cellBorders.containsKey(key)
+                    ) {
+                        rowHasData = true
+                        break
                     }
                 }
-                sheetXml.append("</row>")
-            }
-        }
-        sheetXml.append("</sheetData></worksheet>")
-        zip.write(sheetXml.toString().toByteArray())
-        zip.closeEntry()
+                if (rowHasData) {
+                    sheetXml.append("<row r=\"${r + 1}\">")
+                    for (c in 0 until sheet.maxCol) {
+                        val key = cellKey(r, c)
+                        val raw = sheet.cells[key]?.raw ?: ""
+                        val disp = getCellValue(r, c)
+                        val ref = getColumnName(c) + (r + 1)
 
-        if (cellColors.isNotEmpty() || columnColors.isNotEmpty()) {
-            zip.putNextEntry(ZipEntry("xl/speaksheet_colors.txt"))
-            zip.write(serializeColors().toByteArray(Charsets.UTF_8))
+                        val textColor = sheet.cellTextColors[key] ?: sheet.columnTextColors[c] ?: sheet.rowTextColors[r]
+                        val fontId = fontMap[Triple(sheet.cellBold[key] == true, sheet.cellItalic[key] == true, textColor)] ?: 0
+                        val bgColor = sheet.cellColors[key] ?: sheet.columnColors[c] ?: sheet.rowColors[r]
+                        val fillId = if (bgColor != null) fillMap[bgColor] ?: 0 else 0
+                        val numFmtId = getNumFmtId(sheet.cellNumFmt[key] ?: "General")
+                        val borderId = if ((sheet.cellBorders[key] ?: 0) > 0) 1 else 0
+                        val isWrap = if (c in sheet.wrapEnabled.indices) sheet.wrapEnabled[c] else false
+                        val align = sheet.cellAlign[key] ?: 0
+                        val styleKey = StyleKey(fontId, fillId, borderId, numFmtId, align, isWrap)
+                        val sIdx = xfMap[styleKey] ?: 0
+                        val sAttr = if (sIdx > 0) " s=\"$sIdx\"" else ""
+
+                        if (raw.startsWith("=")) {
+                            val fClean = raw.removePrefix("=").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                            sheetXml.append("<c r=\"$ref\"$sAttr><f>$fClean</f><v>$disp</v></c>")
+                        } else if (raw.toDoubleOrNull() != null) {
+                            sheetXml.append("<c r=\"$ref\"$sAttr><v>$raw</v></c>")
+                        } else if (raw.isNotEmpty()) {
+                            val escaped = raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                            sheetXml.append("<c r=\"$ref\"$sAttr t=\"inlineStr\"><is><t>$escaped</t></is></c>")
+                        } else if (sIdx > 0) {
+                            sheetXml.append("<c r=\"$ref\"$sAttr/>")
+                        }
+                    }
+                    sheetXml.append("</row>\n")
+                }
+            }
+            sheetXml.append("</sheetData>\n")
+
+            // mergeCells
+            if (sheet.mergedRanges.isNotEmpty()) {
+                sheetXml.append("<mergeCells count=\"${sheet.mergedRanges.size}\">\n")
+                for (m in sheet.mergedRanges) {
+                    val mRef = "${getColumnName(m.startCol)}${m.startRow + 1}:${getColumnName(m.endCol)}${m.endRow + 1}"
+                    sheetXml.append("<mergeCell ref=\"$mRef\"/>\n")
+                }
+                sheetXml.append("</mergeCells>\n")
+            }
+            sheetXml.append("</worksheet>")
+            zip.write(sheetXml.toString().toByteArray())
             zip.closeEntry()
         }
 
@@ -1226,12 +1986,15 @@ class SpreadsheetEngine {
         return defaultColWidthDp
     }
 
-    fun isTitleRow(r: Int): Boolean = (r == 0 && getCellValue(0, 0) == "EXAMPLE FILE NAME")
-    fun isDescriptionRow(r: Int): Boolean = (r in 1..3)
-    fun isBannerRow(r: Int): Boolean = (r == 10 || r == 17 || r == 24 || r == 31 || getCellValue(r, 0).startsWith("Section "))
-    fun isHeaderRow(r: Int): Boolean = headerRows.contains(r) || r == 0 || r == 4 || r == 11 || r == 18 || r == 25 || getCellValue(r, 0).equals("Item", ignoreCase = true)
-    fun isDataRow(r: Int): Boolean = !isTitleRow(r) && !isDescriptionRow(r) && !isHeaderRow(r) && !isBannerRow(r) && r < maxRow && getCellValue(r, 0).isNotEmpty()
-    fun isFullWidthRow(r: Int): Boolean = isTitleRow(r) || isDescriptionRow(r) || isBannerRow(r)
+    fun isFullWidthRow(r: Int): Boolean {
+        val range = getMergedRange(r, 0)
+        return range != null && range.startCol == 0 && range.endCol >= maxCol - 1
+    }
+    fun isTitleRow(r: Int): Boolean = isFullWidthRow(r)
+    fun isDescriptionRow(r: Int): Boolean = isFullWidthRow(r)
+    fun isBannerRow(r: Int): Boolean = isFullWidthRow(r)
+    fun isHeaderRow(r: Int): Boolean = headerRows.contains(r)
+    fun isDataRow(r: Int): Boolean = !isFullWidthRow(r) && !isHeaderRow(r) && r < maxRow && getCellValue(r, 0).isNotEmpty()
 
     private fun computeRowHeightPx(
         r: Int,
@@ -1465,21 +2228,6 @@ class SpreadsheetEngine {
         }
     }
 
-    data class CellRange(
-        var startRow: Int,
-        var startCol: Int,
-        var endRow: Int,
-        var endCol: Int
-    ) {
-        fun contains(r: Int, c: Int): Boolean =
-            r in startRow..endRow && c in startCol..endCol
-
-        fun isTopLeft(r: Int, c: Int): Boolean =
-            r == startRow && c == startCol
-    }
-
-    private val mergedRanges = HashSet<CellRange>()
-    private val headerRows = HashSet<Int>()
     private var headerColor: Int? = null
 
     fun mergeRange(startRow: Int, startCol: Int, endRow: Int, endCol: Int) {
@@ -1554,6 +2302,12 @@ class SpreadsheetEngine {
                 range.endRow++
             }
         }
+        val shiftedHeaders = HashSet<Int>()
+        for (hr in headerRows) {
+            if (hr >= r) shiftedHeaders.add(hr + 1) else shiftedHeaders.add(hr)
+        }
+        headerRows.clear()
+        headerRows.addAll(shiftedHeaders)
         maxRow++
         isFullLayoutDirty = true
     }
@@ -1603,24 +2357,44 @@ class SpreadsheetEngine {
             }
         }
 
+        headerRows.remove(r)
+        val shiftedDelHeaders = HashSet<Int>()
+        for (hr in headerRows) {
+            if (hr > r) shiftedDelHeaders.add(hr - 1) else if (hr < r) shiftedDelHeaders.add(hr)
+        }
+        headerRows.clear()
+        headerRows.addAll(shiftedDelHeaders)
+
         maxRow = (maxRow - 1).coerceAtLeast(1)
+        isFullLayoutDirty = true
+    }
+
+    fun setHeaderRow(r: Int) {
+        headerRows.add(r)
+        isFullLayoutDirty = true
+    }
+
+    fun clearHeaderRow(r: Int) {
+        headerRows.remove(r)
+        isFullLayoutDirty = true
+    }
+
+    fun toggleHeaderRow(r: Int) {
+        if (headerRows.contains(r)) {
+            headerRows.remove(r)
+        } else {
+            headerRows.add(r)
+        }
         isFullLayoutDirty = true
     }
 
     fun setHeaderRowColor(color: Int?) {
         headerColor = color
-        setRowColor(0, color)
         for (hr in headerRows) {
             setRowColor(hr, color)
         }
         isFullLayoutDirty = true
     }
-
-    private val cellBold = HashMap<Long, Boolean>()
-    private val cellItalic = HashMap<Long, Boolean>()
-    private val cellAlign = HashMap<Long, Int>() // 0=left, 1=center, 2=right
-    private val cellNumFmt = HashMap<Long, String>() // "General", "Number", "Currency", "Percent", "Date"
-    private val cellBorders = HashMap<Long, Int>() // 0=none, 1=all, 2=outer
 
     fun setCellBold(r: Int, c: Int, bold: Boolean) {
         val key = cellKey(r, c)
@@ -1652,25 +2426,6 @@ class SpreadsheetEngine {
     }
     fun getCellBorders(r: Int, c: Int): Int = cellBorders[cellKey(r, c)] ?: 0
 
-    data class EngineState(
-        val cells: Map<Long, CellData>,
-        val cellColors: Map<Long, Int>,
-        val cellTextColors: Map<Long, Int>,
-        val cellBold: Map<Long, Boolean>,
-        val cellItalic: Map<Long, Boolean>,
-        val cellAlign: Map<Long, Int>,
-        val cellNumFmt: Map<Long, String>,
-        val cellBorders: Map<Long, Int>,
-        val mergedRanges: Set<CellRange>,
-        val description: String
-    )
-
-    private val undoStack = ArrayDeque<EngineState>()
-    private val redoStack = ArrayDeque<EngineState>()
-
-    val canUndo: Boolean get() = undoStack.isNotEmpty()
-    val canRedo: Boolean get() = redoStack.isNotEmpty()
-
     fun pushUndo(description: String) {
         val cellMap = HashMap<Long, CellData>()
         for ((k, v) in cells) {
@@ -1685,7 +2440,14 @@ class SpreadsheetEngine {
             HashMap(cellAlign),
             HashMap(cellNumFmt),
             HashMap(cellBorders),
+            HashMap(rowColors),
+            HashMap(rowTextColors),
+            HashMap(columnColors),
+            HashMap(columnTextColors),
+            maxRow,
+            maxCol,
             HashSet(mergedRanges),
+            HashSet(headerRows),
             description
         ))
         if (undoStack.size > 50) {
@@ -1705,7 +2467,14 @@ class SpreadsheetEngine {
             HashMap(cellAlign),
             HashMap(cellNumFmt),
             HashMap(cellBorders),
+            HashMap(rowColors),
+            HashMap(rowTextColors),
+            HashMap(columnColors),
+            HashMap(columnTextColors),
+            maxRow,
+            maxCol,
             HashSet(mergedRanges),
+            HashSet(headerRows),
             "Current State"
         )
         val prevState = undoStack.removeFirst()
@@ -1722,7 +2491,14 @@ class SpreadsheetEngine {
         cellAlign.clear(); cellAlign.putAll(prevState.cellAlign)
         cellNumFmt.clear(); cellNumFmt.putAll(prevState.cellNumFmt)
         cellBorders.clear(); cellBorders.putAll(prevState.cellBorders)
+        rowColors.clear(); rowColors.putAll(prevState.rowColors)
+        rowTextColors.clear(); rowTextColors.putAll(prevState.rowTextColors)
+        columnColors.clear(); columnColors.putAll(prevState.columnColors)
+        columnTextColors.clear(); columnTextColors.putAll(prevState.columnTextColors)
+        maxRow = prevState.maxRow
+        maxCol = prevState.maxCol
         mergedRanges.clear(); mergedRanges.addAll(prevState.mergedRanges)
+        headerRows.clear(); headerRows.addAll(prevState.headerRows)
         clearCellCaches()
         recalculateAllFormulas()
         isFullLayoutDirty = true
@@ -1740,7 +2516,14 @@ class SpreadsheetEngine {
             HashMap(cellAlign),
             HashMap(cellNumFmt),
             HashMap(cellBorders),
+            HashMap(rowColors),
+            HashMap(rowTextColors),
+            HashMap(columnColors),
+            HashMap(columnTextColors),
+            maxRow,
+            maxCol,
             HashSet(mergedRanges),
+            HashSet(headerRows),
             "Current State"
         )
         val nextState = redoStack.removeFirst()
@@ -1757,7 +2540,14 @@ class SpreadsheetEngine {
         cellAlign.clear(); cellAlign.putAll(nextState.cellAlign)
         cellNumFmt.clear(); cellNumFmt.putAll(nextState.cellNumFmt)
         cellBorders.clear(); cellBorders.putAll(nextState.cellBorders)
+        rowColors.clear(); rowColors.putAll(nextState.rowColors)
+        rowTextColors.clear(); rowTextColors.putAll(nextState.rowTextColors)
+        columnColors.clear(); columnColors.putAll(nextState.columnColors)
+        columnTextColors.clear(); columnTextColors.putAll(nextState.columnTextColors)
+        maxRow = nextState.maxRow
+        maxCol = nextState.maxCol
         mergedRanges.clear(); mergedRanges.addAll(nextState.mergedRanges)
+        headerRows.clear(); headerRows.addAll(nextState.headerRows)
         clearCellCaches()
         recalculateAllFormulas()
         isFullLayoutDirty = true
@@ -1846,6 +2636,53 @@ class SpreadsheetEngine {
         recalculateAllFormulas()
         isFullLayoutDirty = true
         return count
+    }
+
+    fun findMatches(query: String, matchCase: Boolean): List<Pair<Int, Int>> {
+        if (query.isEmpty()) return emptyList()
+        val matches = mutableListOf<Pair<Int, Int>>()
+        for (r in 0 until maxRow) {
+            for (c in 0 until maxCol) {
+                val text = getCellValue(r, c)
+                val matchesCell = if (matchCase) {
+                    text.contains(query)
+                } else {
+                    text.contains(query, ignoreCase = true)
+                }
+                if (matchesCell) {
+                    matches.add(Pair(r, c))
+                }
+            }
+        }
+        return matches
+    }
+
+    fun replaceSingleMatch(r: Int, c: Int, find: String, replace: String, matchCase: Boolean): Boolean {
+        if (find.isEmpty()) return false
+        val key = cellKey(r, c)
+        val cell = cells[key] ?: return false
+        val text = cell.raw
+        val newText = if (matchCase) {
+            text.replaceFirst(find, replace)
+        } else {
+            val idx = text.indexOf(find, ignoreCase = true)
+            if (idx != -1) {
+                text.substring(0, idx) + replace + text.substring(idx + find.length)
+            } else text
+        }
+        if (newText != text) {
+            pushUndo("Replace")
+            cell.raw = newText
+            cell.evaluated = null
+            formulaCellKeys.remove(key)
+            if (newText.startsWith("=")) {
+                formulaCellKeys.add(key)
+            }
+            recalculateAllFormulas()
+            isFullLayoutDirty = true
+            return true
+        }
+        return false
     }
 
     private fun evaluateIf(inner: String): String {
