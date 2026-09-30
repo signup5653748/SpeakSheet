@@ -1,9 +1,5 @@
 name: Build Release APK (Auto-Detect Signing)
 
-on:
-  push:
-  pull_request:
-  workflow_dispatch:
 
 jobs:
   detect:
