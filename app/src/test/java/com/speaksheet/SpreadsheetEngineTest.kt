@@ -102,6 +102,27 @@ class SpreadsheetEngineTest {
     }
 
     @Test
+    fun testBannerAndMergedRange() {
+        engine.insertRow(0)
+        engine.mergeRange(0, 0, 0, engine.maxCol - 1)
+        engine.setCell(0, 0, "Company Financial Report 2026")
+
+        val merged = engine.getMergedRange(0, 0)
+        assertTrue(merged != null)
+        assertEquals(0, merged?.startRow)
+        assertEquals(0, merged?.startCol)
+        assertEquals(0, merged?.endRow)
+        assertEquals(engine.maxCol - 1, merged?.endCol)
+
+        assertTrue(engine.isBannerRow(0))
+        assertTrue(engine.isFullWidthRow(0))
+        assertEquals("Company Financial Report 2026", engine.getCellValue(0, 0))
+
+        engine.unmergeRow(0)
+        assertFalse(engine.isBannerRow(0))
+    }
+
+    @Test
     fun testOpenXmlExportAndImport() {
         SampleSheets.createSectionedReport(engine)
         val out = ByteArrayOutputStream()

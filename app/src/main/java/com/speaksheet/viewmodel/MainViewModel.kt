@@ -877,6 +877,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun speakRow(row: Int) {
+        if (spreadsheetEngine.isBannerRow(row)) {
+            val text = spreadsheetEngine.getCellValue(row, 0)
+            ttsManager.speak("Section text: $text")
+            return
+        }
         val rowNum = row + 1
         val items = mutableListOf<String>()
         val maxColToCheck = minOf(spreadsheetEngine.maxCol, 26)

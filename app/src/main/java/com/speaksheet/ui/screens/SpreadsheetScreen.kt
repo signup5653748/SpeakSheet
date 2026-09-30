@@ -88,6 +88,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Percent
@@ -252,15 +253,31 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
 
 enum class ColorPickerTab { BACKGROUND, TEXT }
 
-val ACTION_MENU_TABS = listOf("Home", "Clipboard", "Insert", "View", "Formulas", "Data", "Row", "Column")
-const val TAB_INDEX_HOME = 0
-const val TAB_INDEX_CLIPBOARD = 1
-const val TAB_INDEX_INSERT = 2
-const val TAB_INDEX_VIEW = 3
-const val TAB_INDEX_FORMULAS = 4
-const val TAB_INDEX_DATA = 5
-const val TAB_INDEX_ROW = 6
-const val TAB_INDEX_COLUMN = 7
+const val MIN_ZOOM = 0.20f
+const val MAX_ZOOM = 3.0f
+
+val ACTION_MENU_TABS = listOf(
+    "Cell",
+    "Alignment & Borders",
+    "Clipboard",
+    "Banner",
+    "View",
+    "Formulas",
+    "Number Format",
+    "Data",
+    "Row",
+    "Column"
+)
+const val TAB_INDEX_CELL = 0
+const val TAB_INDEX_ALIGNMENT_BORDERS = 1
+const val TAB_INDEX_CLIPBOARD = 2
+const val TAB_INDEX_BANNER = 3
+const val TAB_INDEX_VIEW = 4
+const val TAB_INDEX_FORMULAS = 5
+const val TAB_INDEX_NUMBER_FORMAT = 6
+const val TAB_INDEX_DATA = 7
+const val TAB_INDEX_ROW = 8
+const val TAB_INDEX_COLUMN = 9
 
 fun getActionsForTab(
     tabIndex: Int,
@@ -270,18 +287,24 @@ fun getActionsForTab(
     settings: com.speaksheet.data.AppSettings
 ): List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, String>> {
     return when (tabIndex) {
-        TAB_INDEX_HOME -> listOf(
+        TAB_INDEX_CELL -> listOf(
+            Triple("Edit cell", Icons.Default.Edit, "edit"),
+            Triple("Clear cell", Icons.Default.Delete, "clear_cell"),
             Triple(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.FormatBold, "toggle_bold"),
             Triple(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.FormatItalic, "toggle_italic"),
-            Triple("Align left", Icons.AutoMirrored.Filled.FormatAlignLeft, "align_left"),
-            Triple("Align center", Icons.Default.FormatAlignCenter, "align_center"),
-            Triple("Align right", Icons.AutoMirrored.Filled.FormatAlignRight, "align_right"),
             Triple(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.WrapText, "wrap_text"),
             Triple("Cell color", Icons.Default.Palette, "cell_bg_color"),
             Triple("Text color", Icons.Default.FormatColorText, "cell_text_color")
         )
+        TAB_INDEX_ALIGNMENT_BORDERS -> listOf(
+            Triple("Align left", Icons.AutoMirrored.Filled.FormatAlignLeft, "align_left"),
+            Triple("Align center", Icons.Default.FormatAlignCenter, "align_center"),
+            Triple("Align right", Icons.AutoMirrored.Filled.FormatAlignRight, "align_right"),
+            Triple("Border: None", Icons.Default.BorderClear, "border_none"),
+            Triple("Border: All", Icons.Default.BorderAll, "border_all"),
+            Triple("Border: Outer", Icons.Default.BorderOuter, "border_outer")
+        )
         TAB_INDEX_CLIPBOARD -> listOf(
-            Triple("Edit cell", Icons.Default.Edit, "edit"),
             Triple("Copy", Icons.Default.ContentCopy, "copy"),
             Triple("Paste", Icons.Default.ContentPaste, "paste"),
             Triple("Paste values", Icons.Default.ContentPaste, "paste_values"),
@@ -290,15 +313,14 @@ fun getActionsForTab(
             Triple("Fill down", Icons.Default.South, "fill_down"),
             Triple("Fill right", Icons.AutoMirrored.Filled.ArrowForward, "fill_right")
         )
-        TAB_INDEX_INSERT -> listOf(
+        TAB_INDEX_BANNER -> listOf(
             Triple("Banner above", Icons.Default.Add, "insert_banner_above"),
             Triple("Banner below", Icons.Default.Add, "insert_banner_below"),
             Triple("To banner", Icons.Default.Edit, "convert_to_banner"),
             Triple("Unmerge banner", Icons.Default.Clear, "unmerge_banner"),
-            Triple("Border: None", Icons.Default.BorderClear, "border_none"),
-            Triple("Border: All", Icons.Default.BorderAll, "border_all"),
-            Triple("Border: Outer", Icons.Default.BorderOuter, "border_outer"),
-            Triple("Clear cell", Icons.Default.Delete, "clear_cell")
+            Triple("Banner color", Icons.Default.ColorLens, "banner_color"),
+            Triple("Header color", Icons.Default.Palette, "header_row_color"),
+            Triple(if (engine.isHeaderRow(r)) "Clear header row" else "Set header row", Icons.Default.Check, if (engine.isHeaderRow(r)) "clear_header_row" else "set_header_row")
         )
         TAB_INDEX_VIEW -> listOf(
             Triple("Freeze row", Icons.Default.VerticalAlignTop, "freeze_top_row"),
@@ -306,9 +328,7 @@ fun getActionsForTab(
             Triple("Freeze selected", Icons.Default.Lock, "freeze_selected"),
             Triple("Unfreeze panes", Icons.Default.LockOpen, "unfreeze_panes"),
             Triple(if (settings.showGridlines) "Hide grid" else "Show grid", Icons.Default.GridOn, "toggle_gridlines"),
-            Triple("Zoom", Icons.Default.ZoomIn, "zoom_controls"),
-            Triple("Banner color", Icons.Default.ColorLens, "banner_color"),
-            Triple("Header color", Icons.Default.Palette, "header_row_color")
+            Triple("Zoom", Icons.Default.ZoomIn, "zoom_controls")
         )
         TAB_INDEX_FORMULAS -> listOf(
             Triple("=SUM", Icons.Default.Functions, "formula_sum"),
@@ -320,15 +340,18 @@ fun getActionsForTab(
             Triple("=IF", Icons.Default.Functions, "formula_if"),
             Triple("=VLOOKUP", Icons.Default.Functions, "formula_vlookup")
         )
+        TAB_INDEX_NUMBER_FORMAT -> listOf(
+            Triple("Fmt General", Icons.Default.TextFields, "fmt_general"),
+            Triple("Fmt Number", Icons.Default.Tag, "fmt_number"),
+            Triple("Fmt Currency", Icons.Default.AttachMoney, "fmt_currency"),
+            Triple("Fmt Percent", Icons.Default.Percent, "fmt_percent"),
+            Triple("Fmt Date", Icons.Default.CalendarToday, "fmt_date")
+        )
         TAB_INDEX_DATA -> listOf(
             Triple("Sort A-Z", Icons.Default.ArrowUpward, "sort_asc"),
             Triple("Sort Z-A", Icons.Default.ArrowDownward, "sort_desc"),
             Triple("Filter", Icons.Default.FilterList, "filter"),
-            Triple("Find & Replace", Icons.Default.Search, "find_replace"),
-            Triple("Fmt: General", Icons.Default.TextFields, "fmt_general"),
-            Triple("Fmt: Number", Icons.Default.Tag, "fmt_number"),
-            Triple("Fmt: Currency", Icons.Default.AttachMoney, "fmt_currency"),
-            Triple("Fmt: Percent", Icons.Default.Percent, "fmt_percent")
+            Triple("Find & Replace", Icons.Default.Search, "find_replace")
         )
         TAB_INDEX_ROW -> listOf(
             Triple("Insert above", Icons.Default.Add, "insert_row_above"),
@@ -337,21 +360,21 @@ fun getActionsForTab(
             Triple("Clear row", Icons.Default.Clear, "clear_row"),
             Triple("Row color", Icons.Default.Palette, "row_color"),
             Triple("Row text color", Icons.Default.FormatColorText, "row_text_color"),
-            Triple(if (engine.isHeaderRow(r)) "Clear header" else "Set header", Icons.Default.Check, if (engine.isHeaderRow(r)) "clear_header_row" else "set_header_row"),
             Triple("Speak row", Icons.AutoMirrored.Filled.VolumeUp, "speak_row")
         )
         else -> listOf(
             Triple("Speak col", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
             Triple("Col color", Icons.Default.Palette, "column_color"),
             Triple("Clear col", Icons.Default.Clear, "clear_column"),
-            Triple("Delete col", Icons.Default.Delete, "delete_column"),
-            Triple("Fmt: Date", Icons.Default.CalendarToday, "fmt_date")
+            Triple("Delete col", Icons.Default.Delete, "delete_column")
         )
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SwipeableActionMenuStrip(
+fun ActionMenuSheet(
+    onDismiss: () -> Unit,
     pagerState: PagerState,
     targetCell: Pair<Int, Int>,
     engine: SpreadsheetEngine,
@@ -369,172 +392,303 @@ fun SwipeableActionMenuStrip(
 ) {
     val context = LocalContext.current
     val (r, c) = targetCell
+    val cellCoord = "${engine.getColumnName(c)}${r + 1}"
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        ScrollableTabRow(
-            selectedTabIndex = pagerState.currentPage,
-            edgePadding = 4.dp,
-            containerColor = Color.Transparent,
-            contentColor = GreenPrimary,
-            divider = {},
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        modifier = Modifier.testTag("action_menu_sheet")
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(38.dp)
+                .padding(bottom = 16.dp)
         ) {
-            ACTION_MENU_TABS.forEachIndexed { index, tabName ->
-                val isSelected = pagerState.currentPage == index
-                Tab(
-                    selected = isSelected,
-                    onClick = {
-                        if (pagerState.currentPage != index) {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(index)
-                            }
-                            viewModel.ttsManager.speak("$tabName tab selected")
-                        }
-                    },
-                    text = {
-                        Text(
-                            text = tabName,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.sp,
-                            color = if (isSelected) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    modifier = Modifier
-                        .semantics {
-                            role = androidx.compose.ui.semantics.Role.Tab
-                            selected = isSelected
-                            contentDescription = "$tabName tab, ${index + 1} of ${ACTION_MENU_TABS.size}, ${if (isSelected) "selected" else "not selected"}"
-                        }
-                        .testTag("tab_${tabName.lowercase()}")
-                )
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
-
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(156.dp)
-        ) { page ->
-            val actions = getActionsForTab(page, r, c, engine, settings)
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                items(actions, key = { it.third }) { action ->
-                    Button(
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = GreenPrimary
+                    ) {
+                        Text(
+                            text = cellCoord,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Actions Menu",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(32.dp).testTag("close_action_menu")
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close Menu",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+
+            ScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage,
+                edgePadding = 8.dp,
+                containerColor = Color.Transparent,
+                contentColor = GreenPrimary,
+                divider = {},
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+            ) {
+                ACTION_MENU_TABS.forEachIndexed { index, tabName ->
+                    val isSelected = pagerState.currentPage == index
+                    Tab(
+                        selected = isSelected,
                         onClick = {
-                            when (action.third) {
-                                "edit" -> onEditCell(Pair(r, c), null)
-                                "copy" -> viewModel.copyCell(context, r, c)
-                                "paste" -> viewModel.pasteCell(context, r, c)
-                                "paste_values" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.VALUES_ONLY)
-                                "paste_formats" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMATS_ONLY)
-                                "paste_formulas" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMULAS_ONLY)
-                                "fill_down" -> viewModel.fillDown(r, c, minOf(r + 5, engine.maxRow - 1), c)
-                                "fill_right" -> viewModel.fillRight(r, c, r, minOf(c + 3, engine.maxCol - 1))
-                                "clear_cell" -> viewModel.deleteCell(r, c)
-
-                                "toggle_bold" -> viewModel.setCellBold(r, c, !engine.getCellBold(r, c))
-                                "toggle_italic" -> viewModel.setCellItalic(r, c, !engine.getCellItalic(r, c))
-                                "align_left" -> viewModel.setCellAlignment(r, c, 0)
-                                "align_center" -> viewModel.setCellAlignment(r, c, 1)
-                                "align_right" -> viewModel.setCellAlignment(r, c, 2)
-                                "wrap_text" -> viewModel.toggleColumnWrap(c)
-                                "cell_bg_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
-                                "cell_text_color" -> onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
-
-                                "insert_banner_above" -> viewModel.insertBannerAbove(r) { onEditCell(it, null) }
-                                "insert_banner_below" -> viewModel.insertBannerBelow(r) { onEditCell(it, null) }
-                                "convert_to_banner" -> viewModel.convertRowToBanner(r)
-                                "unmerge_banner" -> viewModel.unmergeBanner(r)
-                                "border_none" -> viewModel.setCellBorders(r, c, 0)
-                                "border_all" -> viewModel.setCellBorders(r, c, 1)
-                                "border_outer" -> viewModel.setCellBorders(r, c, 2)
-
-                                "freeze_top_row" -> viewModel.setFreezePanes(1, engine.frozenCols)
-                                "freeze_first_col" -> viewModel.setFreezePanes(engine.frozenRows, 1)
-                                "freeze_selected" -> viewModel.setFreezePanes(r + 1, c + 1)
-                                "unfreeze_panes" -> viewModel.setFreezePanes(0, 0)
-                                "toggle_gridlines" -> viewModel.updateSettings(settings.copy(showGridlines = !settings.showGridlines))
-                                "zoom_controls" -> onOpenZoom()
-                                "banner_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
-                                "header_row_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
-
-                                "formula_sum" -> onEditCell(Pair(r, c), "=SUM(")
-                                "formula_avg" -> onEditCell(Pair(r, c), "=AVERAGE(")
-                                "formula_count" -> onEditCell(Pair(r, c), "=COUNT(")
-                                "formula_min" -> onEditCell(Pair(r, c), "=MIN(")
-                                "formula_max" -> onEditCell(Pair(r, c), "=MAX(")
-                                "formula_sort" -> onEditCell(Pair(r, c), "=SORT(")
-                                "formula_if" -> onEditCell(Pair(r, c), "=IF(")
-                                "formula_vlookup" -> onEditCell(Pair(r, c), "=VLOOKUP(")
-
-                                "sort_asc" -> viewModel.sortColumn(c, true)
-                                "sort_desc" -> viewModel.sortColumn(c, false)
-                                "filter" -> onOpenFilter(c)
-                                "find_replace" -> onOpenFindReplace()
-                                "fmt_general" -> viewModel.setCellNumberFormat(r, c, "General")
-                                "fmt_number" -> viewModel.setCellNumberFormat(r, c, "Number")
-                                "fmt_currency" -> viewModel.setCellNumberFormat(r, c, "Currency")
-                                "fmt_percent" -> viewModel.setCellNumberFormat(r, c, "Percent")
-                                "fmt_date" -> viewModel.setCellNumberFormat(r, c, "Date")
-
-                                "insert_row_above" -> viewModel.insertRowAbove(r)
-                                "insert_row_below" -> viewModel.insertRowBelow(r)
-                                "delete_row" -> onConfirmDeleteRow(r)
-                                "clear_row" -> onConfirmClearRow(r)
-                                "row_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
-                                "row_text_color" -> onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.TEXT)
-                                "set_header_row" -> viewModel.setHeaderRow(r)
-                                "clear_header_row" -> viewModel.clearHeaderRow(r)
-                                "speak_row" -> viewModel.speakRow(r)
-
-                                "speak_column" -> viewModel.speakColumn(c)
-                                "column_color" -> onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
-                                "clear_column" -> onConfirmClearCol(c)
-                                "delete_column" -> viewModel.clearColumn(c)
+                            if (pagerState.currentPage != index) {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                                viewModel.ttsManager.speak("$tabName tab selected")
+                                viewModel.updateSettings(settings.copy(lastActionMenuTab = index))
                             }
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .testTag("action_${action.third}")
-                            .semantics { contentDescription = action.first },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = action.second,
-                                contentDescription = null,
-                                tint = GreenPrimary,
-                                modifier = Modifier.size(17.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
+                        text = {
                             Text(
-                                text = action.first,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = tabName,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 12.sp,
+                                color = if (isSelected) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        },
+                        modifier = Modifier
+                            .semantics {
+                                role = androidx.compose.ui.semantics.Role.Tab
+                                selected = isSelected
+                                contentDescription = "$tabName tab, ${index + 1} of ${ACTION_MENU_TABS.size}, ${if (isSelected) "selected" else "not selected"}"
+                            }
+                            .testTag("tab_${tabName.lowercase().replace(" ", "_").replace("&", "and")}")
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+            ) { page ->
+                val actions = getActionsForTab(page, r, c, engine, settings)
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(actions, key = { it.third }) { action ->
+                        Button(
+                            onClick = {
+                                when (action.third) {
+                                    "edit" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), null)
+                                    }
+                                    "copy" -> viewModel.copyCell(context, r, c)
+                                    "paste" -> viewModel.pasteCell(context, r, c)
+                                    "paste_values" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.VALUES_ONLY)
+                                    "paste_formats" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMATS_ONLY)
+                                    "paste_formulas" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMULAS_ONLY)
+                                    "fill_down" -> viewModel.fillDown(r, c, minOf(r + 5, engine.maxRow - 1), c)
+                                    "fill_right" -> viewModel.fillRight(r, c, r, minOf(c + 3, engine.maxCol - 1))
+                                    "clear_cell" -> viewModel.deleteCell(r, c)
+
+                                    "toggle_bold" -> viewModel.setCellBold(r, c, !engine.getCellBold(r, c))
+                                    "toggle_italic" -> viewModel.setCellItalic(r, c, !engine.getCellItalic(r, c))
+                                    "align_left" -> viewModel.setCellAlignment(r, c, 0)
+                                    "align_center" -> viewModel.setCellAlignment(r, c, 1)
+                                    "align_right" -> viewModel.setCellAlignment(r, c, 2)
+                                    "wrap_text" -> viewModel.toggleColumnWrap(c)
+                                    "cell_bg_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
+                                    }
+                                    "cell_text_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
+                                    }
+
+                                    "insert_banner_above" -> {
+                                        onDismiss()
+                                        viewModel.insertBannerAbove(r) { onEditCell(it, null) }
+                                    }
+                                    "insert_banner_below" -> {
+                                        onDismiss()
+                                        viewModel.insertBannerBelow(r) { onEditCell(it, null) }
+                                    }
+                                    "convert_to_banner" -> viewModel.convertRowToBanner(r)
+                                    "unmerge_banner" -> viewModel.unmergeBanner(r)
+                                    "border_none" -> viewModel.setCellBorders(r, c, 0)
+                                    "border_all" -> viewModel.setCellBorders(r, c, 1)
+                                    "border_outer" -> viewModel.setCellBorders(r, c, 2)
+
+                                    "freeze_top_row" -> viewModel.setFreezePanes(1, engine.frozenCols)
+                                    "freeze_first_col" -> viewModel.setFreezePanes(engine.frozenRows, 1)
+                                    "freeze_selected" -> viewModel.setFreezePanes(r + 1, c + 1)
+                                    "unfreeze_panes" -> viewModel.setFreezePanes(0, 0)
+                                    "toggle_gridlines" -> viewModel.updateSettings(settings.copy(showGridlines = !settings.showGridlines))
+                                    "zoom_controls" -> {
+                                        onDismiss()
+                                        onOpenZoom()
+                                    }
+                                    "banner_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+                                    }
+                                    "header_row_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+                                    }
+
+                                    "formula_sum" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=SUM(")
+                                    }
+                                    "formula_avg" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=AVERAGE(")
+                                    }
+                                    "formula_count" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=COUNT(")
+                                    }
+                                    "formula_min" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=MIN(")
+                                    }
+                                    "formula_max" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=MAX(")
+                                    }
+                                    "formula_sort" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=SORT(")
+                                    }
+                                    "formula_if" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=IF(")
+                                    }
+                                    "formula_vlookup" -> {
+                                        onDismiss()
+                                        onEditCell(Pair(r, c), "=VLOOKUP(")
+                                    }
+
+                                    "sort_asc" -> viewModel.sortColumn(c, true)
+                                    "sort_desc" -> viewModel.sortColumn(c, false)
+                                    "filter" -> {
+                                        onDismiss()
+                                        onOpenFilter(c)
+                                    }
+                                    "find_replace" -> {
+                                        onDismiss()
+                                        onOpenFindReplace()
+                                    }
+                                    "fmt_general" -> viewModel.setCellNumberFormat(r, c, "General")
+                                    "fmt_number" -> viewModel.setCellNumberFormat(r, c, "Number")
+                                    "fmt_currency" -> viewModel.setCellNumberFormat(r, c, "Currency")
+                                    "fmt_percent" -> viewModel.setCellNumberFormat(r, c, "Percent")
+                                    "fmt_date" -> viewModel.setCellNumberFormat(r, c, "Date")
+
+                                    "insert_row_above" -> viewModel.insertRowAbove(r)
+                                    "insert_row_below" -> viewModel.insertRowBelow(r)
+                                    "delete_row" -> {
+                                        onDismiss()
+                                        onConfirmDeleteRow(r)
+                                    }
+                                    "clear_row" -> {
+                                        onDismiss()
+                                        onConfirmClearRow(r)
+                                    }
+                                    "row_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+                                    }
+                                    "row_text_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.TEXT)
+                                    }
+                                    "set_header_row" -> viewModel.setHeaderRow(r)
+                                    "clear_header_row" -> viewModel.clearHeaderRow(r)
+                                    "speak_row" -> viewModel.speakRow(r)
+
+                                    "speak_column" -> viewModel.speakColumn(c)
+                                    "column_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
+                                    }
+                                    "clear_column" -> {
+                                        onDismiss()
+                                        onConfirmClearCol(c)
+                                    }
+                                    "delete_column" -> viewModel.clearColumn(c)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("action_${action.third}")
+                                .semantics { contentDescription = action.first },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = action.second,
+                                    contentDescription = null,
+                                    tint = GreenPrimary,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = action.first,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -708,6 +862,7 @@ fun SpreadsheetScreen(
     var selectedCell by remember { mutableStateOf<Pair<Int, Int>?>(Pair(0, 0)) }
     var editingCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showMenuForCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var showActionMenuSheet by remember { mutableStateOf(false) }
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showZoomControlsMenu by remember { mutableStateOf(false) }
     var showColumnMenu by remember { mutableStateOf<Int?>(null) }
@@ -746,24 +901,27 @@ fun SpreadsheetScreen(
 
     LaunchedEffect(showColumnMenu) {
         showColumnMenu?.let { col ->
-            pagerState.animateScrollToPage(TAB_INDEX_COLUMN)
-            viewModel.ttsManager.speak("Column tab selected for column ${engine.getColumnName(col)}")
+            pagerState.scrollToPage(TAB_INDEX_COLUMN)
+            showActionMenuSheet = true
+            viewModel.ttsManager.speak("Column actions menu opened for ${engine.getColumnName(col)}")
             showColumnMenu = null
         }
     }
 
     LaunchedEffect(showRowMenu) {
         showRowMenu?.let { row ->
-            pagerState.animateScrollToPage(TAB_INDEX_ROW)
-            viewModel.ttsManager.speak("Row tab selected for row ${row + 1}")
+            pagerState.scrollToPage(TAB_INDEX_ROW)
+            showActionMenuSheet = true
+            viewModel.ttsManager.speak("Row actions menu opened for row ${row + 1}")
             showRowMenu = null
         }
     }
 
     LaunchedEffect(showMenuForCell) {
         showMenuForCell?.let { cell ->
-            pagerState.animateScrollToPage(TAB_INDEX_HOME)
-            viewModel.ttsManager.speak("Home tab selected for cell ${engine.getColumnName(cell.second)}${cell.first + 1}")
+            pagerState.scrollToPage(TAB_INDEX_CELL)
+            showActionMenuSheet = true
+            viewModel.ttsManager.speak("Cell actions menu opened for cell ${engine.getColumnName(cell.second)}${cell.first + 1}")
             showMenuForCell = null
         }
     }
@@ -882,6 +1040,7 @@ fun SpreadsheetScreen(
     val gridColor = if (settings.highContrastGrid) Color(0xFF888888) else Color(0xFF444444)
     val headerBg = MaterialTheme.colorScheme.surface
     val highlightFill = GreenPrimary.copy(alpha = 0.22f)
+    val defaultBannerBg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
 
     val cellLayoutCache = remember(textStyle, headerRowStyle, headerStyleNormal, headerStyleSelected) {
         CellLayoutCache(textMeasurer)
@@ -955,7 +1114,7 @@ fun SpreadsheetScreen(
             32f * density + ((if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f) - 32f * density) / 2f
         )
     ) {
-        val clampedZoom = newZoom.coerceIn(0.20f, 3.0f)
+        val clampedZoom = newZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
         if (userZoom == clampedZoom) return
         val oldZoom = userZoom
         userZoom = clampedZoom
@@ -1036,7 +1195,11 @@ fun SpreadsheetScreen(
     fun moveSelection(deltaRow: Int, deltaCol: Int) {
         val current = selectedCell ?: Pair(0, 0)
         val newR = (current.first + deltaRow).coerceIn(0, engine.maxRow - 1)
-        val newC = (current.second + deltaCol).coerceIn(0, engine.maxCol - 1)
+        var newC = (current.second + deltaCol).coerceIn(0, engine.maxCol - 1)
+        val isBanner = engine.isBannerRow(newR)
+        if (isBanner) {
+            newC = 0
+        }
         selectedCell = Pair(newR, newC)
         scrollToCell(newR, newC)
         viewModel.speakCell(newR, newC)
@@ -1623,53 +1786,22 @@ fun SpreadsheetScreen(
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Speak Cell", modifier = Modifier.size(18.dp))
                             }
+                            FilledTonalIconButton(
+                                onClick = {
+                                    val targetTab = settings.lastActionMenuTab.coerceIn(0, ACTION_MENU_TABS.lastIndex)
+                                    coroutineScope.launch {
+                                        pagerState.scrollToPage(targetTab)
+                                    }
+                                    showActionMenuSheet = true
+                                    triggerHaptic()
+                                    viewModel.ttsManager.speak("${ACTION_MENU_TABS[targetTab]} actions menu opened")
+                                },
+                                modifier = Modifier.size(38.dp).testTag("action_menu")
+                            ) {
+                                Icon(Icons.Default.MoreHoriz, contentDescription = "Actions Menu", modifier = Modifier.size(18.dp))
+                            }
                         }
                     }
-
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                        thickness = 0.5.dp,
-                        modifier = Modifier.padding(vertical = 2.dp)
-                    )
-
-                    // Swipeable Action Menu Strip
-                    SwipeableActionMenuStrip(
-                        pagerState = pagerState,
-                        targetCell = Pair(curRow, curCol),
-                        engine = engine,
-                        viewModel = viewModel,
-                        settings = settings,
-                        coroutineScope = coroutineScope,
-                        onEditCell = { cellPair, initialFormula ->
-                            editingCell = cellPair
-                            if (initialFormula != null) {
-                                engine.setCell(cellPair.first, cellPair.second, initialFormula)
-                            }
-                        },
-                        onOpenColorPicker = { target, tab ->
-                            colorPickerState = ColorPickerState(target, tab)
-                        },
-                        onOpenZoom = {
-                            showZoomControlsMenu = true
-                        },
-                        onOpenFindReplace = {
-                            showFindReplace = true
-                        },
-                        onOpenFilter = { col ->
-                            filterColIndex = col
-                            val dist = engine.getDistinctValuesForColumn(col)
-                            filterSelectedValues = dist.toSet()
-                        },
-                        onConfirmClearCol = { col -> clearColConfirm = col },
-                        onConfirmClearRow = { row -> clearRowConfirm = row },
-                        onConfirmDeleteRow = { row -> deleteRowConfirm = row }
-                    )
-
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                        thickness = 0.5.dp,
-                        modifier = Modifier.padding(vertical = 2.dp)
-                    )
 
                     // Bottom Row: Navigation 4 Buttons (Left, Up, Down, Right) with smooth scrolling & clear landing
                     Row(
@@ -1835,7 +1967,7 @@ fun SpreadsheetScreen(
                                     val oldZoom = userZoom
                                     // Deadzone check: ignore micro-jitter when zoom factor is extremely close to 1.0
                                     val newZoom = if (kotlin.math.abs(smoothedZoom - 1.0f) > 0.002f) {
-                                        (oldZoom * smoothedZoom).coerceIn(0.7f, 3.0f)
+                                        (oldZoom * smoothedZoom).coerceIn(MIN_ZOOM, MAX_ZOOM)
                                     } else {
                                         oldZoom
                                     }
@@ -2074,8 +2206,120 @@ fun SpreadsheetScreen(
                                 break
                             }
 
+                            val bannerRange = engine.getMergedRange(r, 0)
+                            val isBanner = engine.isBannerRow(r)
+
+                            if (isBanner) {
+                                val bannerLeft = 0f
+                                val bannerWidth = maxOf(engine.totalWidthPx, visibleRightUnscaled)
+                                val isSelected = selectedCell?.first == r
+
+                                val cellColorInt = engine.getCellColor(r, 0)
+                                val rowColorInt = engine.getRowColor(r)
+                                val customBgColor = when {
+                                    cellColorInt != null -> Color(cellColorInt)
+                                    rowColorInt != null -> Color(rowColorInt)
+                                    else -> defaultBannerBg
+                                }
+
+                                drawRect(
+                                    color = customBgColor,
+                                    topLeft = Offset(bannerLeft, rowTop),
+                                    size = Size(bannerWidth, rowHeight)
+                                )
+
+                                if (isSelected) {
+                                    drawRect(
+                                        color = highlightFill,
+                                        topLeft = Offset(bannerLeft, rowTop),
+                                        size = Size(bannerWidth, rowHeight)
+                                    )
+                                }
+
+                                drawRect(
+                                    color = gridColor,
+                                    topLeft = Offset(bannerLeft, rowTop),
+                                    size = Size(bannerWidth, rowHeight),
+                                    style = Stroke(width = 1f * density)
+                                )
+
+                                val text = engine.getCellValue(r, 0)
+                                if (text.isNotEmpty()) {
+                                    clipRect(
+                                        left = bannerLeft + pad,
+                                        top = rowTop + pad,
+                                        right = bannerLeft + bannerWidth - pad,
+                                        bottom = rowBottom - pad
+                                    ) {
+                                        val cellTextColorInt = engine.getCellTextColor(r, 0)
+                                        val rowTextColorInt = engine.getRowTextColor(r)
+                                        val customTextColor = when {
+                                            cellTextColorInt != null -> Color(cellTextColorInt)
+                                            rowTextColorInt != null -> Color(rowTextColorInt)
+                                            else -> null
+                                        }
+                                        val effectiveStyle = if (customTextColor != null) {
+                                            headerRowStyle.copy(color = customTextColor)
+                                        } else {
+                                            val lum = 0.2126f * customBgColor.red + 0.7152f * customBgColor.green + 0.0722f * customBgColor.blue
+                                            val contrastingColor = if (lum > 0.5f) Color(0xFF111111) else Color(0xFFF5F5F5)
+                                            headerRowStyle.copy(color = contrastingColor)
+                                        }
+
+                                        val availableW = (bannerWidth - 2 * pad).roundToInt().coerceAtLeast(1)
+                                        val textLayout = cellLayoutCache.getCellLayout(
+                                            r = r,
+                                            c = 0,
+                                            text = text,
+                                            isHeader = true,
+                                            style = effectiveStyle,
+                                            isWrapped = true,
+                                            maxWidthPx = availableW
+                                        )
+
+                                        val align = engine.getCellAlignment(r, 0)
+                                        val isRight = engine.isRightAligned(r, 0) || align == 2
+                                        val isCenter = align == 1
+                                        val textX = when {
+                                            isRight -> (bannerLeft + bannerWidth - pad - textLayout.size.width).coerceAtLeast(bannerLeft + pad)
+                                            isCenter -> bannerLeft + (bannerWidth - textLayout.size.width) / 2f
+                                            else -> bannerLeft + pad
+                                        }
+                                        val textY = rowTop + (rowHeight - textLayout.size.height) / 2f
+
+                                        drawText(
+                                            textLayoutResult = textLayout,
+                                            topLeft = Offset(textX, textY)
+                                        )
+                                    }
+                                }
+
+                                if (isSelected) {
+                                    drawRect(
+                                        color = Color.White,
+                                        topLeft = Offset(bannerLeft + 1.5f * density, rowTop + 1.5f * density),
+                                        size = Size(bannerWidth - 3f * density, rowHeight - 3f * density),
+                                        style = Stroke(width = 1.5f * density)
+                                    )
+                                    drawRect(
+                                        color = GreenPrimary,
+                                        topLeft = Offset(bannerLeft, rowTop),
+                                        size = Size(bannerWidth, rowHeight),
+                                        style = Stroke(width = 3.5f * density)
+                                    )
+                                }
+
+                                r++
+                                continue
+                            }
+
                             var c = startCol
                             while (c < engine.maxCol) {
+                                val cellMerged = engine.getMergedRange(r, c)
+                                if (cellMerged != null && !cellMerged.isTopLeft(r, c)) {
+                                    c++
+                                    continue
+                                }
                                 val colLeft = engine.getColOffsetPx(c)
                                 val colWidth = engine.getColWidthPx(c)
                                 val colRight = colLeft + colWidth
@@ -2969,7 +3213,7 @@ fun SpreadsheetScreen(
                     ) {
                         FilledTonalIconButton(
                             onClick = {
-                                applyZoom((userZoom - 0.15f).coerceIn(0.20f, 3.0f))
+                                applyZoom((userZoom - 0.15f).coerceIn(MIN_ZOOM, MAX_ZOOM))
                             },
                             modifier = Modifier.testTag("dialog_zoom_out_button")
                         ) {
@@ -2979,7 +3223,7 @@ fun SpreadsheetScreen(
                         Slider(
                             value = userZoom,
                             onValueChange = { applyZoom(it) },
-                            valueRange = 0.20f..3.0f,
+                            valueRange = MIN_ZOOM..MAX_ZOOM,
                             steps = 28,
                             modifier = Modifier
                                 .weight(1f)
@@ -2993,7 +3237,7 @@ fun SpreadsheetScreen(
 
                         FilledTonalIconButton(
                             onClick = {
-                                applyZoom((userZoom + 0.15f).coerceIn(0.20f, 3.0f))
+                                applyZoom((userZoom + 0.15f).coerceIn(MIN_ZOOM, MAX_ZOOM))
                             },
                             modifier = Modifier.testTag("dialog_zoom_in_button")
                         ) {
@@ -3048,7 +3292,7 @@ fun SpreadsheetScreen(
                                 val viewW = (if (viewportSize.width > 0) viewportSize.width.toFloat() else 1000f) - headerW
                                 val viewH = (if (viewportSize.height > 0) viewportSize.height.toFloat() else 1500f) - headerH
                                 val fitZoom = if (viewW > 0 && viewH > 0 && engine.totalWidthPx > 0 && engine.totalHeightPx > 0) {
-                                    minOf(viewW / engine.totalWidthPx, viewH / engine.totalHeightPx).coerceIn(0.20f, 1.0f)
+                                    minOf(viewW / engine.totalWidthPx, viewH / engine.totalHeightPx).coerceIn(MIN_ZOOM, 1.0f)
                                 } else {
                                     0.25f
                                 }
@@ -3445,6 +3689,43 @@ fun SpreadsheetScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    if (showActionMenuSheet) {
+        val curR = selectedCell?.first ?: 0
+        val curC = selectedCell?.second ?: 0
+        ActionMenuSheet(
+            onDismiss = { showActionMenuSheet = false },
+            pagerState = pagerState,
+            targetCell = Pair(curR, curC),
+            engine = engine,
+            viewModel = viewModel,
+            settings = settings,
+            coroutineScope = coroutineScope,
+            onEditCell = { cellPair, initialFormula ->
+                editingCell = cellPair
+                if (initialFormula != null) {
+                    engine.setCell(cellPair.first, cellPair.second, initialFormula)
+                }
+            },
+            onOpenColorPicker = { target, tab ->
+                colorPickerState = ColorPickerState(target, tab)
+            },
+            onOpenZoom = {
+                showZoomControlsMenu = true
+            },
+            onOpenFindReplace = {
+                showFindReplace = true
+            },
+            onOpenFilter = { col ->
+                filterColIndex = col
+                val dist = engine.getDistinctValuesForColumn(col)
+                filterSelectedValues = dist.toSet()
+            },
+            onConfirmClearCol = { col -> clearColConfirm = col },
+            onConfirmClearRow = { row -> clearRowConfirm = row },
+            onConfirmDeleteRow = { row -> deleteRowConfirm = row }
         )
     }
 }

@@ -1988,7 +1988,7 @@ class SpreadsheetEngine {
 
     fun isFullWidthRow(r: Int): Boolean {
         val range = getMergedRange(r, 0)
-        return range != null && range.startCol == 0 && range.endCol >= maxCol - 1
+        return range != null && range.startCol == 0 && range.startRow == r && range.endRow == r && (range.endCol >= maxCol - 2 || (range.endCol - range.startCol >= 3 && range.endCol >= maxCol / 2) || range.endCol >= 3)
     }
     fun isTitleRow(r: Int): Boolean = isFullWidthRow(r)
     fun isDescriptionRow(r: Int): Boolean = isFullWidthRow(r)
