@@ -1,5 +1,7 @@
 name: Build Release APK (Auto-Detect Signing)
 
+on:
+  workflow_dispatch:
 
 jobs:
   detect:
