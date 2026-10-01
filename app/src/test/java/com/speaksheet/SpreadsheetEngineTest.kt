@@ -123,6 +123,78 @@ class SpreadsheetEngineTest {
     }
 
     @Test
+    fun testUsedColCountAndBannerWidth() {
+        // Initially empty spreadsheet of 20 rows x 10 cols, auto-extended to 50 cols
+        engine.newSpreadsheet(rows = 20, cols = 50)
+        
+        // Put data in columns A (0), B (1), C (2) only
+        engine.setCell(1, 0, "Item")
+        engine.setCell(1, 1, "Price")
+        engine.setCell(1, 2, "Qty")
+        
+        // Set a banner in row 0
+        engine.mergeRange(0, 0, 0, engine.maxCol - 1)
+        engine.setCell(0, 0, "Inventory Summary")
+        
+        // Used column count should be 3 (columns 0, 1, 2), not 50
+        assertEquals(3, engine.getUsedColCount())
+        
+        val expectedWidth = engine.getColOffsetPx(2) + engine.getColWidthPx(2)
+        assertEquals(expectedWidth, engine.getUsedWidthPx(), 0.01f)
+    }
+
+    @Test
+    fun testBannerAndHeaderColumnNameResolution() {
+        // Row 0: Banner / Title row
+        engine.newSpreadsheet(rows = 20, cols = 10)
+        engine.mergeRange(0, 0, 0, engine.maxCol - 1)
+        engine.setCell(0, 0, "Q3 Regional Performance Report")
+
+        // Row 1: Subtitle banner
+        engine.mergeRange(1, 0, 1, engine.maxCol - 1)
+        engine.setCell(1, 0, "North America Division")
+
+        // Row 2: Real marked header row
+        engine.setHeaderRow(2)
+        engine.setCell(2, 0, "Region")
+        engine.setCell(2, 1, "Sales (\$M)")
+        engine.setCell(2, 2, "Growth (%)")
+
+        // Row 3: Data row
+        engine.setCell(3, 0, "Northeast")
+        engine.setCell(3, 1, "45.2")
+        engine.setCell(3, 2, "12.4%")
+
+        // Confirm getColumnHeaderName for row 3 correctly reads the real header row 2
+        assertEquals("Region", engine.getColumnHeaderName(0, forRow = 3))
+        assertEquals("Sales (\$M)", engine.getColumnHeaderName(1, forRow = 3))
+        assertEquals("Growth (%)", engine.getColumnHeaderName(2, forRow = 3))
+
+        // Confirm getColumnHeaderName for row 0 / 1 (banner rows) does NOT return banner text, but "Column A"
+        assertEquals("Column A", engine.getColumnHeaderName(0, forRow = 0))
+        assertEquals("Column A", engine.getColumnHeaderName(0, forRow = 1))
+    }
+
+    @Test
+    fun testSplitHeaderColors() {
+        engine.setHeaderRow(1)
+        engine.setHeaderBgColor(0xFF1976D2.toInt())
+        engine.setHeaderTextColor(0xFFFFFFFF.toInt())
+
+        assertEquals(0xFF1976D2.toInt(), engine.headerBgColor)
+        assertEquals(0xFFFFFFFF.toInt(), engine.headerTextColor)
+
+        // Test Undo/Redo preserves both fields
+        engine.pushUndo("Edit")
+        engine.setHeaderBgColor(0xFF00897B.toInt())
+        assertEquals(0xFF00897B.toInt(), engine.headerBgColor)
+
+        engine.undo()
+        assertEquals(0xFF1976D2.toInt(), engine.headerBgColor)
+        assertEquals(0xFFFFFFFF.toInt(), engine.headerTextColor)
+    }
+
+    @Test
     fun testOpenXmlExportAndImport() {
         SampleSheets.createSectionedReport(engine)
         val out = ByteArrayOutputStream()

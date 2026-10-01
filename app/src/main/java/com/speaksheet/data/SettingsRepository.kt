@@ -47,7 +47,9 @@ data class AppSettings(
     val deleteMode: DeleteMode = DeleteMode.CLEAR_CELL,
     val voiceTypingLanguage: String = "",
     val lastActionMenuTab: Int = 0,
-    val showGridlines: Boolean = true
+    val showGridlines: Boolean = true,
+    val themeColor: Int = 0xFF4CAF50.toInt(),
+    val selectedCellColor: Int = 0xFF4CAF50.toInt()
 )
 
 class SettingsRepository(private val context: Context) {
@@ -74,6 +76,8 @@ class SettingsRepository(private val context: Context) {
         val VOICE_TYPING_LANG = stringPreferencesKey("voice_typing_lang")
         val LAST_ACTION_MENU_TAB = intPreferencesKey("last_action_menu_tab")
         val SHOW_GRIDLINES = booleanPreferencesKey("show_gridlines")
+        val THEME_COLOR = intPreferencesKey("theme_color")
+        val SELECTED_CELL_COLOR = intPreferencesKey("selected_cell_color")
     }
 
     val appSettingsFlow: Flow<AppSettings> = context.dataStore.data
@@ -99,7 +103,9 @@ class SettingsRepository(private val context: Context) {
                 deleteMode = DeleteMode.entries.getOrElse(preferences[PreferencesKeys.DELETE_MODE] ?: 0) { DeleteMode.CLEAR_CELL },
                 voiceTypingLanguage = preferences[PreferencesKeys.VOICE_TYPING_LANG] ?: "",
                 lastActionMenuTab = preferences[PreferencesKeys.LAST_ACTION_MENU_TAB] ?: 0,
-                showGridlines = preferences[PreferencesKeys.SHOW_GRIDLINES] ?: true
+                showGridlines = preferences[PreferencesKeys.SHOW_GRIDLINES] ?: true,
+                themeColor = preferences[PreferencesKeys.THEME_COLOR] ?: 0xFF4CAF50.toInt(),
+                selectedCellColor = preferences[PreferencesKeys.SELECTED_CELL_COLOR] ?: 0xFF4CAF50.toInt()
             )
         }
 
@@ -126,6 +132,8 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.VOICE_TYPING_LANG] = settings.voiceTypingLanguage
             preferences[PreferencesKeys.LAST_ACTION_MENU_TAB] = settings.lastActionMenuTab
             preferences[PreferencesKeys.SHOW_GRIDLINES] = settings.showGridlines
+            preferences[PreferencesKeys.THEME_COLOR] = settings.themeColor
+            preferences[PreferencesKeys.SELECTED_CELL_COLOR] = settings.selectedCellColor
         }
     }
 }

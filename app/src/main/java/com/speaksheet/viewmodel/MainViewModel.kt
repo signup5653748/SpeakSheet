@@ -587,7 +587,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val value = spreadsheetEngine.getCellValue(row, col)
         val formula = spreadsheetEngine.getCellFormulaOrValue(row, col)
         val colLetter = spreadsheetEngine.getColumnName(col)
-        val headerName = spreadsheetEngine.getColumnHeaderName(col)
+        val headerName = spreadsheetEngine.getColumnHeaderName(col, row)
         
         val settings = appSettings.value
 
@@ -733,35 +733,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun insertBannerAbove(row: Int, onEdit: (Pair<Int, Int>) -> Unit) {
-        spreadsheetEngine.pushUndo("Insert Banner")
-        updateUndoRedoState()
-        viewModelScope.launch {
-            spreadsheetEngine.insertRow(row)
-            spreadsheetEngine.mergeRange(row, 0, row, spreadsheetEngine.maxCol - 1)
-            spreadsheetEngine.setCell(row, 0, "New Banner")
-            _gridRefreshTrigger.value += 1
-            autoSaveCurrentFile()
-            ttsManager.speak("Inserted banner above row ${row + 1}")
-            onEdit(Pair(row, 0))
-        }
-    }
-
-    fun insertBannerBelow(row: Int, onEdit: (Pair<Int, Int>) -> Unit) {
-        val targetRow = row + 1
-        spreadsheetEngine.pushUndo("Insert Banner")
-        updateUndoRedoState()
-        viewModelScope.launch {
-            spreadsheetEngine.insertRow(targetRow)
-            spreadsheetEngine.mergeRange(targetRow, 0, targetRow, spreadsheetEngine.maxCol - 1)
-            spreadsheetEngine.setCell(targetRow, 0, "New Banner")
-            _gridRefreshTrigger.value += 1
-            autoSaveCurrentFile()
-            ttsManager.speak("Inserted banner below row ${row + 1}")
-            onEdit(Pair(targetRow, 0))
-        }
-    }
-
     fun convertRowToBanner(row: Int) {
         spreadsheetEngine.pushUndo("Convert to Banner")
         updateUndoRedoState()
@@ -770,6 +741,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
             ttsManager.speak("Converted row ${row + 1} to banner")
+        }
+    }
+
+    fun setHeaderBgColor(color: Int?) {
+        spreadsheetEngine.pushUndo("Set Header Background Color")
+        spreadsheetEngine.setHeaderBgColor(color)
+        updateUndoRedoState()
+        viewModelScope.launch {
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Header background color updated")
+        }
+    }
+
+    fun setHeaderTextColor(color: Int?) {
+        spreadsheetEngine.pushUndo("Set Header Text Color")
+        spreadsheetEngine.setHeaderTextColor(color)
+        updateUndoRedoState()
+        viewModelScope.launch {
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Header text color updated")
         }
     }
 
@@ -803,17 +796,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
             ttsManager.speak("Cleared header row ${row + 1}")
-        }
-    }
-
-    fun setHeaderRowColor(color: Int?) {
-        spreadsheetEngine.pushUndo("Header Color")
-        updateUndoRedoState()
-        viewModelScope.launch {
-            spreadsheetEngine.setHeaderRowColor(color)
-            _gridRefreshTrigger.value += 1
-            autoSaveCurrentFile()
-            ttsManager.speak("Header row color updated")
         }
     }
 

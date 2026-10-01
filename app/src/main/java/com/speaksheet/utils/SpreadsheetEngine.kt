@@ -57,6 +57,8 @@ class SpreadsheetEngine {
         val maxCol: Int,
         val mergedRanges: Set<CellRange>,
         val headerRows: Set<Int>,
+        val headerBgColor: Int? = null,
+        val headerTextColor: Int? = null,
         val description: String
     )
 
@@ -66,6 +68,8 @@ class SpreadsheetEngine {
         var maxCol: Int = 15,
         var frozenRows: Int = 0,
         var frozenCols: Int = 0,
+        var headerBgColor: Int? = null,
+        var headerTextColor: Int? = null,
         var zoom: Float = 1.0f,
         var scrollX: Float = 0f,
         var scrollY: Float = 0f,
@@ -110,6 +114,12 @@ class SpreadsheetEngine {
     var frozenCols: Int
         get() = currentSheet.frozenCols
         set(value) { currentSheet.frozenCols = value }
+
+    val headerBgColor: Int?
+        get() = currentSheet.headerBgColor
+
+    val headerTextColor: Int?
+        get() = currentSheet.headerTextColor
 
     val cells: HashMap<Long, CellData>
         get() = currentSheet.cells
@@ -402,6 +412,8 @@ class SpreadsheetEngine {
         for (r in headerRows) {
             sb.append("$r\n")
         }
+        headerBgColor?.let { sb.append("[HEADER_BG_COLOR]\n$it\n") }
+        headerTextColor?.let { sb.append("[HEADER_TEXT_COLOR]\n$it\n") }
         return sb.toString()
     }
 
@@ -478,6 +490,16 @@ class SpreadsheetEngine {
                 val r = parts[0].trim().toIntOrNull()
                 if (r != null) {
                     headerRows.add(r)
+                }
+            } else if ((section == "[HEADER_BG_COLOR]" || section == "[HEADER_COLOR]") && parts.isNotEmpty()) {
+                val color = parts[0].trim().toIntOrNull()
+                if (color != null) {
+                    currentSheet.headerBgColor = color
+                }
+            } else if (section == "[HEADER_TEXT_COLOR]" && parts.isNotEmpty()) {
+                val color = parts[0].trim().toIntOrNull()
+                if (color != null) {
+                    currentSheet.headerTextColor = color
                 }
             }
         }
@@ -1996,6 +2018,38 @@ class SpreadsheetEngine {
     fun isHeaderRow(r: Int): Boolean = headerRows.contains(r)
     fun isDataRow(r: Int): Boolean = !isFullWidthRow(r) && !isHeaderRow(r) && r < maxRow && getCellValue(r, 0).isNotEmpty()
 
+    fun getUsedColCount(): Int {
+        var maxUsedCol = -1
+        for ((key, cell) in cells) {
+            if (cell.raw.isNotEmpty()) {
+                val r = (key ushr 32).toInt()
+                val c = (key and 0xFFFFFFFFL).toInt()
+                if (!isBannerRow(r)) {
+                    if (c > maxUsedCol) maxUsedCol = c
+                }
+            }
+        }
+        if (maxUsedCol < 0) {
+            for ((key, cell) in cells) {
+                if (cell.raw.isNotEmpty()) {
+                    val c = (key and 0xFFFFFFFFL).toInt()
+                    if (c > maxUsedCol) maxUsedCol = c
+                }
+            }
+        }
+        return if (maxUsedCol >= 0) {
+            (maxUsedCol + 1).coerceIn(1, maxCol)
+        } else {
+            minOf(maxCol, 5)
+        }
+    }
+
+    fun getUsedWidthPx(): Float {
+        val usedCount = getUsedColCount()
+        val lastIdx = (usedCount - 1).coerceIn(0, maxCol - 1)
+        return getColOffsetPx(lastIdx) + getColWidthPx(lastIdx)
+    }
+
     private fun computeRowHeightPx(
         r: Int,
         density: Float,
@@ -2007,7 +2061,7 @@ class SpreadsheetEngine {
         if (isFullWidthRow(r)) {
             val text = getCellValue(r, 0)
             if (text.isNotEmpty()) {
-                val totalW = (0 until maxCol).sumOf { getColWidthPx(it).toDouble() }.toFloat()
+                val totalW = getUsedWidthPx()
                 val h = measureRowCellHeight?.invoke(r, 0, text, totalW) ?: run {
                     val approxCharsPerLine = ((totalW - 20f * density) / (8.5f * density)).coerceAtLeast(1f)
                     val lines = text.split("\n").sumOf { line ->
@@ -2219,16 +2273,34 @@ class SpreadsheetEngine {
         return name
     }
 
-    fun getColumnHeaderName(col: Int): String {
-        val firstCell = getCellValue(0, col).trim()
-        return if (firstCell.isNotEmpty()) {
-            firstCell
-        } else {
-            "Column ${getColumnName(col)}"
+    fun getColumnHeaderName(col: Int, forRow: Int = 0): String {
+        for (r in forRow downTo 0) {
+            if (isBannerRow(r)) {
+                return "Column ${getColumnName(col)}"
+            }
+            if (isHeaderRow(r)) {
+                val cellVal = getCellValue(r, col).trim()
+                return if (cellVal.isNotEmpty()) cellVal else "Column ${getColumnName(col)}"
+            }
         }
+        return "Column ${getColumnName(col)}"
     }
 
-    private var headerColor: Int? = null
+    fun setHeaderBgColor(color: Int?) {
+        currentSheet.headerBgColor = color
+        for (hr in headerRows) {
+            setRowColor(hr, color)
+        }
+        isFullLayoutDirty = true
+    }
+
+    fun setHeaderTextColor(color: Int?) {
+        currentSheet.headerTextColor = color
+        for (hr in headerRows) {
+            setRowTextColor(hr, color)
+        }
+        isFullLayoutDirty = true
+    }
 
     fun mergeRange(startRow: Int, startCol: Int, endRow: Int, endCol: Int) {
         val sR = minOf(startRow, endRow)
@@ -2388,14 +2460,6 @@ class SpreadsheetEngine {
         isFullLayoutDirty = true
     }
 
-    fun setHeaderRowColor(color: Int?) {
-        headerColor = color
-        for (hr in headerRows) {
-            setRowColor(hr, color)
-        }
-        isFullLayoutDirty = true
-    }
-
     fun setCellBold(r: Int, c: Int, bold: Boolean) {
         val key = cellKey(r, c)
         if (bold) cellBold[key] = true else cellBold.remove(key)
@@ -2448,6 +2512,8 @@ class SpreadsheetEngine {
             maxCol,
             HashSet(mergedRanges),
             HashSet(headerRows),
+            headerBgColor,
+            headerTextColor,
             description
         ))
         if (undoStack.size > 50) {
@@ -2475,6 +2541,8 @@ class SpreadsheetEngine {
             maxCol,
             HashSet(mergedRanges),
             HashSet(headerRows),
+            headerBgColor,
+            headerTextColor,
             "Current State"
         )
         val prevState = undoStack.removeFirst()
@@ -2499,6 +2567,8 @@ class SpreadsheetEngine {
         maxCol = prevState.maxCol
         mergedRanges.clear(); mergedRanges.addAll(prevState.mergedRanges)
         headerRows.clear(); headerRows.addAll(prevState.headerRows)
+        currentSheet.headerBgColor = prevState.headerBgColor
+        currentSheet.headerTextColor = prevState.headerTextColor
         clearCellCaches()
         recalculateAllFormulas()
         isFullLayoutDirty = true
@@ -2524,6 +2594,8 @@ class SpreadsheetEngine {
             maxCol,
             HashSet(mergedRanges),
             HashSet(headerRows),
+            headerBgColor,
+            headerTextColor,
             "Current State"
         )
         val nextState = redoStack.removeFirst()
@@ -2548,6 +2620,8 @@ class SpreadsheetEngine {
         maxCol = nextState.maxCol
         mergedRanges.clear(); mergedRanges.addAll(nextState.mergedRanges)
         headerRows.clear(); headerRows.addAll(nextState.headerRows)
+        currentSheet.headerBgColor = nextState.headerBgColor
+        currentSheet.headerTextColor = nextState.headerTextColor
         clearCellCaches()
         recalculateAllFormulas()
         isFullLayoutDirty = true

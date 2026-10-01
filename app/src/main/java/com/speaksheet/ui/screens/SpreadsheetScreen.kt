@@ -279,94 +279,100 @@ const val TAB_INDEX_DATA = 7
 const val TAB_INDEX_ROW = 8
 const val TAB_INDEX_COLUMN = 9
 
+data class MenuItemData(
+    val title: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val actionId: String,
+    val subtitle: String? = null
+)
+
 fun getActionsForTab(
     tabIndex: Int,
     r: Int,
     c: Int,
     engine: SpreadsheetEngine,
     settings: com.speaksheet.data.AppSettings
-): List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, String>> {
+): List<MenuItemData> {
     return when (tabIndex) {
         TAB_INDEX_CELL -> listOf(
-            Triple("Edit cell", Icons.Default.Edit, "edit"),
-            Triple("Clear cell", Icons.Default.Delete, "clear_cell"),
-            Triple(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.FormatBold, "toggle_bold"),
-            Triple(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.FormatItalic, "toggle_italic"),
-            Triple(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.WrapText, "wrap_text"),
-            Triple("Cell color", Icons.Default.Palette, "cell_bg_color"),
-            Triple("Text color", Icons.Default.FormatColorText, "cell_text_color")
+            MenuItemData("Edit cell", Icons.Default.Edit, "edit"),
+            MenuItemData("Clear cell", Icons.Default.Delete, "clear_cell"),
+            MenuItemData(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.FormatBold, "toggle_bold"),
+            MenuItemData(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.FormatItalic, "toggle_italic"),
+            MenuItemData(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.WrapText, "wrap_text"),
+            MenuItemData("Cell color", Icons.Default.Palette, "cell_bg_color"),
+            MenuItemData("Text color", Icons.Default.FormatColorText, "cell_text_color")
         )
         TAB_INDEX_ALIGNMENT_BORDERS -> listOf(
-            Triple("Align left", Icons.AutoMirrored.Filled.FormatAlignLeft, "align_left"),
-            Triple("Align center", Icons.Default.FormatAlignCenter, "align_center"),
-            Triple("Align right", Icons.AutoMirrored.Filled.FormatAlignRight, "align_right"),
-            Triple("Border: None", Icons.Default.BorderClear, "border_none"),
-            Triple("Border: All", Icons.Default.BorderAll, "border_all"),
-            Triple("Border: Outer", Icons.Default.BorderOuter, "border_outer")
+            MenuItemData("Align left", Icons.AutoMirrored.Filled.FormatAlignLeft, "align_left"),
+            MenuItemData("Align center", Icons.Default.FormatAlignCenter, "align_center"),
+            MenuItemData("Align right", Icons.AutoMirrored.Filled.FormatAlignRight, "align_right"),
+            MenuItemData("Border: None", Icons.Default.BorderClear, "border_none"),
+            MenuItemData("Border: All", Icons.Default.BorderAll, "border_all"),
+            MenuItemData("Border: Outer", Icons.Default.BorderOuter, "border_outer")
         )
         TAB_INDEX_CLIPBOARD -> listOf(
-            Triple("Copy", Icons.Default.ContentCopy, "copy"),
-            Triple("Paste", Icons.Default.ContentPaste, "paste"),
-            Triple("Paste values", Icons.Default.ContentPaste, "paste_values"),
-            Triple("Paste formats", Icons.Default.ContentPaste, "paste_formats"),
-            Triple("Paste formulas", Icons.Default.ContentPaste, "paste_formulas"),
-            Triple("Fill down", Icons.Default.South, "fill_down"),
-            Triple("Fill right", Icons.AutoMirrored.Filled.ArrowForward, "fill_right")
+            MenuItemData("Copy", Icons.Default.ContentCopy, "copy"),
+            MenuItemData("Paste", Icons.Default.ContentPaste, "paste"),
+            MenuItemData("Paste values", Icons.Default.ContentPaste, "paste_values"),
+            MenuItemData("Paste formats", Icons.Default.ContentPaste, "paste_formats"),
+            MenuItemData("Paste formulas", Icons.Default.ContentPaste, "paste_formulas"),
+            MenuItemData("Fill down", Icons.Default.South, "fill_down"),
+            MenuItemData("Fill right", Icons.AutoMirrored.Filled.ArrowForward, "fill_right")
         )
         TAB_INDEX_BANNER -> listOf(
-            Triple("Banner above", Icons.Default.Add, "insert_banner_above"),
-            Triple("Banner below", Icons.Default.Add, "insert_banner_below"),
-            Triple("To banner", Icons.Default.Edit, "convert_to_banner"),
-            Triple("Unmerge banner", Icons.Default.Clear, "unmerge_banner"),
-            Triple("Banner color", Icons.Default.ColorLens, "banner_color"),
-            Triple("Header color", Icons.Default.Palette, "header_row_color"),
-            Triple(if (engine.isHeaderRow(r)) "Clear header row" else "Set header row", Icons.Default.Check, if (engine.isHeaderRow(r)) "clear_header_row" else "set_header_row")
+            MenuItemData("To banner", Icons.Default.Edit, "convert_to_banner"),
+            MenuItemData("Unmerge banner", Icons.Default.Clear, "unmerge_banner"),
+            MenuItemData("Banner background color", Icons.Default.ColorLens, "banner_color", "Color of the selected banner/divider row"),
+            MenuItemData("Header cell background color", Icons.Default.Palette, "header_bg_color", "Background fill color of the header row"),
+            MenuItemData("Header cell text color", Icons.Default.FormatColorText, "header_text_color", "Text color of the header row"),
+            MenuItemData(if (engine.isHeaderRow(r)) "Clear header row" else "Set header row", Icons.Default.Check, if (engine.isHeaderRow(r)) "clear_header_row" else "set_header_row")
         )
         TAB_INDEX_VIEW -> listOf(
-            Triple("Freeze row", Icons.Default.VerticalAlignTop, "freeze_top_row"),
-            Triple("Freeze col", Icons.Default.VerticalAlignBottom, "freeze_first_col"),
-            Triple("Freeze selected", Icons.Default.Lock, "freeze_selected"),
-            Triple("Unfreeze panes", Icons.Default.LockOpen, "unfreeze_panes"),
-            Triple(if (settings.showGridlines) "Hide grid" else "Show grid", Icons.Default.GridOn, "toggle_gridlines"),
-            Triple("Zoom", Icons.Default.ZoomIn, "zoom_controls")
+            MenuItemData("Freeze row", Icons.Default.VerticalAlignTop, "freeze_top_row"),
+            MenuItemData("Freeze col", Icons.Default.VerticalAlignBottom, "freeze_first_col"),
+            MenuItemData("Freeze selected", Icons.Default.Lock, "freeze_selected"),
+            MenuItemData("Unfreeze panes", Icons.Default.LockOpen, "unfreeze_panes"),
+            MenuItemData(if (settings.showGridlines) "Hide grid" else "Show grid", Icons.Default.GridOn, "toggle_gridlines"),
+            MenuItemData("Zoom", Icons.Default.ZoomIn, "zoom_controls")
         )
         TAB_INDEX_FORMULAS -> listOf(
-            Triple("=SUM", Icons.Default.Functions, "formula_sum"),
-            Triple("=AVERAGE", Icons.Default.Functions, "formula_avg"),
-            Triple("=COUNT", Icons.Default.Functions, "formula_count"),
-            Triple("=MIN", Icons.Default.Functions, "formula_min"),
-            Triple("=MAX", Icons.Default.Functions, "formula_max"),
-            Triple("=SORT", Icons.Default.Functions, "formula_sort"),
-            Triple("=IF", Icons.Default.Functions, "formula_if"),
-            Triple("=VLOOKUP", Icons.Default.Functions, "formula_vlookup")
+            MenuItemData("=SUM", Icons.Default.Functions, "formula_sum"),
+            MenuItemData("=AVERAGE", Icons.Default.Functions, "formula_avg"),
+            MenuItemData("=COUNT", Icons.Default.Functions, "formula_count"),
+            MenuItemData("=MIN", Icons.Default.Functions, "formula_min"),
+            MenuItemData("=MAX", Icons.Default.Functions, "formula_max"),
+            MenuItemData("=SORT", Icons.Default.Functions, "formula_sort"),
+            MenuItemData("=IF", Icons.Default.Functions, "formula_if"),
+            MenuItemData("=VLOOKUP", Icons.Default.Functions, "formula_vlookup")
         )
         TAB_INDEX_NUMBER_FORMAT -> listOf(
-            Triple("Fmt General", Icons.Default.TextFields, "fmt_general"),
-            Triple("Fmt Number", Icons.Default.Tag, "fmt_number"),
-            Triple("Fmt Currency", Icons.Default.AttachMoney, "fmt_currency"),
-            Triple("Fmt Percent", Icons.Default.Percent, "fmt_percent"),
-            Triple("Fmt Date", Icons.Default.CalendarToday, "fmt_date")
+            MenuItemData("Fmt General", Icons.Default.TextFields, "fmt_general"),
+            MenuItemData("Fmt Number", Icons.Default.Tag, "fmt_number"),
+            MenuItemData("Fmt Currency", Icons.Default.AttachMoney, "fmt_currency"),
+            MenuItemData("Fmt Percent", Icons.Default.Percent, "fmt_percent"),
+            MenuItemData("Fmt Date", Icons.Default.CalendarToday, "fmt_date")
         )
         TAB_INDEX_DATA -> listOf(
-            Triple("Sort A-Z", Icons.Default.ArrowUpward, "sort_asc"),
-            Triple("Sort Z-A", Icons.Default.ArrowDownward, "sort_desc"),
-            Triple("Filter", Icons.Default.FilterList, "filter"),
-            Triple("Find & Replace", Icons.Default.Search, "find_replace")
+            MenuItemData("Sort A-Z", Icons.Default.ArrowUpward, "sort_asc"),
+            MenuItemData("Sort Z-A", Icons.Default.ArrowDownward, "sort_desc"),
+            MenuItemData("Filter", Icons.Default.FilterList, "filter"),
+            MenuItemData("Find & Replace", Icons.Default.Search, "find_replace")
         )
         TAB_INDEX_ROW -> listOf(
-            Triple("Insert above", Icons.Default.Add, "insert_row_above"),
-            Triple("Insert below", Icons.Default.Add, "insert_row_below"),
-            Triple("Delete row", Icons.Default.Delete, "delete_row"),
-            Triple("Clear row", Icons.Default.Clear, "clear_row"),
-            Triple("Row color", Icons.Default.Palette, "row_color"),
-            Triple("Row text color", Icons.Default.FormatColorText, "row_text_color"),
-            Triple("Speak row", Icons.AutoMirrored.Filled.VolumeUp, "speak_row")
+            MenuItemData("Insert above", Icons.Default.Add, "insert_row_above"),
+            MenuItemData("Insert below", Icons.Default.Add, "insert_row_below"),
+            MenuItemData("Delete row", Icons.Default.Delete, "delete_row"),
+            MenuItemData("Clear row", Icons.Default.Clear, "clear_row"),
+            MenuItemData("Row color", Icons.Default.Palette, "row_color"),
+            MenuItemData("Row text color", Icons.Default.FormatColorText, "row_text_color"),
+            MenuItemData("Speak row", Icons.AutoMirrored.Filled.VolumeUp, "speak_row")
         )
         else -> listOf(
-            Triple("Speak col", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
-            Triple("Col color", Icons.Default.Palette, "column_color"),
-            Triple("Clear col", Icons.Default.Clear, "clear_column"),
-            Triple("Delete col", Icons.Default.Delete, "delete_column")
+            MenuItemData("Speak col", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
+            MenuItemData("Col color", Icons.Default.Palette, "column_color"),
+            MenuItemData("Clear col", Icons.Default.Clear, "clear_column"),
+            MenuItemData("Delete col", Icons.Default.Delete, "delete_column")
         )
     }
 }
@@ -510,10 +516,10 @@ fun ActionMenuSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(actions, key = { it.third }) { action ->
+                    items(actions, key = { it.actionId }) { action ->
                         Button(
                             onClick = {
-                                when (action.third) {
+                                when (action.actionId) {
                                     "edit" -> {
                                         onDismiss()
                                         onEditCell(Pair(r, c), null)
@@ -542,14 +548,6 @@ fun ActionMenuSheet(
                                         onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
                                     }
 
-                                    "insert_banner_above" -> {
-                                        onDismiss()
-                                        viewModel.insertBannerAbove(r) { onEditCell(it, null) }
-                                    }
-                                    "insert_banner_below" -> {
-                                        onDismiss()
-                                        viewModel.insertBannerBelow(r) { onEditCell(it, null) }
-                                    }
                                     "convert_to_banner" -> viewModel.convertRowToBanner(r)
                                     "unmerge_banner" -> viewModel.unmergeBanner(r)
                                     "border_none" -> viewModel.setCellBorders(r, c, 0)
@@ -569,9 +567,13 @@ fun ActionMenuSheet(
                                         onDismiss()
                                         onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
                                     }
-                                    "header_row_color" -> {
+                                    "header_bg_color" -> {
                                         onDismiss()
-                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+                                        onOpenColorPicker(ColorTarget.Header(r), ColorPickerTab.BACKGROUND)
+                                    }
+                                    "header_text_color" -> {
+                                        onDismiss()
+                                        onOpenColorPicker(ColorTarget.Header(r), ColorPickerTab.TEXT)
                                     }
 
                                     "formula_sum" -> {
@@ -660,8 +662,8 @@ fun ActionMenuSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 48.dp)
-                                .testTag("action_${action.third}")
-                                .semantics { contentDescription = action.first },
+                                .testTag("action_${action.actionId}")
+                                .semantics { contentDescription = action.title },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -669,25 +671,42 @@ fun ActionMenuSheet(
                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
                             ) {
-                                Icon(
-                                    imageVector = action.second,
-                                    contentDescription = null,
-                                    tint = GreenPrimary,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = action.first,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = action.icon,
+                                        contentDescription = null,
+                                        tint = GreenPrimary,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = action.title,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (!action.subtitle.isNullOrBlank()) {
+                                    Text(
+                                        text = action.subtitle,
+                                        fontSize = 8.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        lineHeight = 10.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -835,6 +854,7 @@ sealed class ColorTarget {
     data class Cell(val r: Int, val c: Int) : ColorTarget()
     data class Column(val c: Int) : ColorTarget()
     data class Row(val r: Int) : ColorTarget()
+    data class Header(val r: Int) : ColorTarget()
 }
 
 data class ColorPickerState(
@@ -1023,23 +1043,26 @@ fun SpreadsheetScreen(
         }
     }
 
+    val themeAccentColor = Color(settings.themeColor)
+    val selectedCellColor = Color(settings.selectedCellColor)
+
     val textMeasurer = rememberTextMeasurer(cacheSize = 512)
     val textStyle = MaterialTheme.typography.bodyMedium.copy(
         color = MaterialTheme.colorScheme.onBackground,
         fontSize = 13.sp
     )
-    val headerRowStyle = textStyle.copy(fontWeight = FontWeight.Bold, color = GreenPrimary)
+    val headerRowStyle = textStyle.copy(fontWeight = FontWeight.Bold, color = themeAccentColor)
     val headerStyle = MaterialTheme.typography.labelMedium.copy(
         color = MaterialTheme.colorScheme.onSurface,
         fontWeight = FontWeight.Bold,
         fontSize = 11.sp
     )
     val headerStyleNormal = remember(headerStyle) { headerStyle }
-    val headerStyleSelected = remember(headerStyle) { headerStyle.copy(color = GreenPrimary) }
+    val headerStyleSelected = remember(headerStyle, themeAccentColor) { headerStyle.copy(color = themeAccentColor) }
 
     val gridColor = if (settings.highContrastGrid) Color(0xFF888888) else Color(0xFF444444)
     val headerBg = MaterialTheme.colorScheme.surface
-    val highlightFill = GreenPrimary.copy(alpha = 0.22f)
+    val highlightFill = selectedCellColor.copy(alpha = 0.22f)
     val defaultBannerBg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
 
     val cellLayoutCache = remember(textStyle, headerRowStyle, headerStyleNormal, headerStyleSelected) {
@@ -1287,37 +1310,6 @@ fun SpreadsheetScreen(
                             contentDescription = "Save Spreadsheet",
                             tint = GreenPrimary
                         )
-                    }
-
-                    // Quick Reset Zoom chip if zoomed
-                    if (isZoomed) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = GreenPrimary.copy(alpha = 0.15f),
-                            modifier = Modifier
-                                .padding(end = 4.dp)
-                                .clickable { applyZoom(1.0f) }
-                                .testTag("top_bar_zoom_reset")
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Refresh,
-                                    contentDescription = null,
-                                    tint = GreenPrimary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(Modifier.width(2.dp))
-                                Text(
-                                    text = "Reset $zoomPercent%",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GreenPrimary
-                                )
-                            }
-                        }
                     }
 
                     Box {
@@ -1631,7 +1623,7 @@ fun SpreadsheetScreen(
                     val curRow = selectedCell?.first ?: 0
                     val curCol = selectedCell?.second ?: 0
                     val cellLetter = engine.getColumnName(curCol)
-                    val cellHeader = engine.getColumnHeaderName(curCol)
+                    val cellHeader = engine.getColumnHeaderName(curCol, curRow)
                     val cellCoord = "$cellLetter${curRow + 1}"
                     val cellVal = engine.getCellValue(curRow, curCol)
                     
@@ -2211,7 +2203,7 @@ fun SpreadsheetScreen(
 
                             if (isBanner) {
                                 val bannerLeft = 0f
-                                val bannerWidth = maxOf(engine.totalWidthPx, visibleRightUnscaled)
+                                val bannerWidth = engine.getUsedWidthPx()
                                 val isSelected = selectedCell?.first == r
 
                                 val cellColorInt = engine.getCellColor(r, 0)
@@ -2302,7 +2294,7 @@ fun SpreadsheetScreen(
                                         style = Stroke(width = 1.5f * density)
                                     )
                                     drawRect(
-                                        color = GreenPrimary,
+                                        color = selectedCellColor,
                                         topLeft = Offset(bannerLeft, rowTop),
                                         size = Size(bannerWidth, rowHeight),
                                         style = Stroke(width = 3.5f * density)
@@ -2339,12 +2331,14 @@ fun SpreadsheetScreen(
                                 // 2. Row color
                                 // 3. Column color
                                 // 4. Default background
+                                val isHeaderRow = engine.isHeaderRow(r)
                                 val cellColorInt = engine.getCellColor(r, c)
                                 val rowColorInt = engine.getRowColor(r)
                                 val colColorInt = engine.getColumnColor(c)
                                 val customBgColor = when {
                                     cellColorInt != null -> Color(cellColorInt)
                                     rowColorInt != null -> Color(rowColorInt)
+                                    isHeaderRow && engine.headerBgColor != null -> Color(engine.headerBgColor!!)
                                     colColorInt != null -> Color(colColorInt)
                                     else -> null
                                 }
@@ -2393,7 +2387,6 @@ fun SpreadsheetScreen(
                                         right = colRight - pad,
                                         bottom = rowBottom - pad
                                     ) {
-                                        val isHeaderRow = engine.isHeaderRow(r)
                                         val isWrapped = engine.isWrapEnabled(c)
                                         val cellTextColorInt = engine.getCellTextColor(r, c)
                                         val rowTextColorInt = engine.getRowTextColor(r)
@@ -2401,6 +2394,7 @@ fun SpreadsheetScreen(
                                         val customTextColor = when {
                                             cellTextColorInt != null -> Color(cellTextColorInt)
                                             rowTextColorInt != null -> Color(rowTextColorInt)
+                                            isHeaderRow && engine.headerTextColor != null -> Color(engine.headerTextColor!!)
                                             colTextColorInt != null -> Color(colTextColorInt)
                                             else -> null
                                         }
@@ -2456,7 +2450,7 @@ fun SpreadsheetScreen(
                                         style = Stroke(width = 1.5f * density)
                                     )
                                     drawRect(
-                                        color = GreenPrimary,
+                                        color = selectedCellColor,
                                         topLeft = Offset(colLeft, rowTop),
                                         size = Size(colWidth, rowHeight),
                                         style = Stroke(width = 3.5f * density)
@@ -2473,8 +2467,10 @@ fun SpreadsheetScreen(
                 // --- 2. Frozen Top Column Headers ---
                 // Pinned to the top edge (y in 0..headerH), tracking content horizontally
                 clipRect(left = headerW, top = 0f, right = size.width, bottom = headerH) {
+                    val headerBgColorInt = engine.headerBgColor
+                    val effectiveHeaderBg = if (headerBgColorInt != null) Color(headerBgColorInt) else headerBg
                     drawRect(
-                        color = headerBg,
+                        color = effectiveHeaderBg,
                         topLeft = Offset(headerW, 0f),
                         size = Size(size.width - headerW, headerH)
                     )
@@ -2500,7 +2496,13 @@ fun SpreadsheetScreen(
                         val displayLabel = colLetter
 
                         val isColSelected = selectedCell?.second == hc
-                        val effectiveHeaderStyle = if (isColSelected) headerStyleSelected else headerStyleNormal
+                        val headerTextColorInt = engine.headerTextColor
+                        val baseHeaderStyle = if (isColSelected) headerStyleSelected else headerStyleNormal
+                        val effectiveHeaderStyle = if (headerTextColorInt != null) {
+                            baseHeaderStyle.copy(color = Color(headerTextColorInt))
+                        } else {
+                            baseHeaderStyle
+                        }
 
                         val colColorInt = engine.getColumnColor(hc)
                         if (colColorInt != null) {
@@ -2660,7 +2662,7 @@ fun SpreadsheetScreen(
         var isFormulaExpanded by remember(r, c) {
             mutableStateOf(formulaOrValue.startsWith("="))
         }
-        val headerName = engine.getColumnHeaderName(c)
+        val headerName = engine.getColumnHeaderName(c, r)
         val cellTitle = if (r > 0 && headerName.isNotEmpty() && !headerName.startsWith("Column ")) {
             "Edit ${engine.getColumnName(c)}${r + 1} ($headerName)"
         } else {
@@ -2883,6 +2885,7 @@ fun SpreadsheetScreen(
                     is ColorTarget.Cell -> viewModel.setCellColor(target.r, target.c, color)
                     is ColorTarget.Column -> viewModel.setColumnColor(target.c, color)
                     is ColorTarget.Row -> viewModel.setRowColor(target.r, color)
+                    is ColorTarget.Header -> viewModel.setHeaderBgColor(color)
                 }
             },
             onSetTextColor = { color ->
@@ -2890,6 +2893,7 @@ fun SpreadsheetScreen(
                     is ColorTarget.Cell -> viewModel.setCellTextColor(target.r, target.c, color)
                     is ColorTarget.Column -> viewModel.setColumnTextColor(target.c, color)
                     is ColorTarget.Row -> viewModel.setRowTextColor(target.r, color)
+                    is ColorTarget.Header -> viewModel.setHeaderTextColor(color)
                 }
             },
             onDismiss = { colorPickerState = null }
@@ -3784,12 +3788,14 @@ fun UnifiedColorPickerDialog(
         is ColorTarget.Cell -> engine.getCellColor(target.r, target.c)
         is ColorTarget.Column -> engine.getColumnColor(target.c)
         is ColorTarget.Row -> engine.getRowColor(target.r)
+        is ColorTarget.Header -> engine.headerBgColor
     }
 
     val currentTextColor = when (val target = state.target) {
         is ColorTarget.Cell -> engine.getCellTextColor(target.r, target.c)
         is ColorTarget.Column -> engine.getColumnTextColor(target.c)
         is ColorTarget.Row -> engine.getRowTextColor(target.r)
+        is ColorTarget.Header -> engine.headerTextColor
     }
 
     var workingBgColor by remember { mutableStateOf(currentBgColor ?: 0xFFFFFFFF.toInt()) }
@@ -3813,6 +3819,7 @@ fun UnifiedColorPickerDialog(
         is ColorTarget.Cell -> "${engine.getColumnName(target.c)}${target.r + 1}"
         is ColorTarget.Column -> "Column ${engine.getColumnName(target.c)}"
         is ColorTarget.Row -> "Row ${target.r + 1}"
+        is ColorTarget.Header -> "Header Row"
     }
 
     AlertDialog(

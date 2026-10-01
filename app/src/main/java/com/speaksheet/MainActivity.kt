@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,9 +36,16 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            SpeakSheetTheme {
+            val viewModel: MainViewModel = viewModel()
+            val settings by viewModel.appSettings.collectAsStateWithLifecycle()
+            val themeColor = androidx.compose.ui.graphics.Color(settings.themeColor)
+            val selectedCellColor = androidx.compose.ui.graphics.Color(settings.selectedCellColor)
+
+            SpeakSheetTheme(
+                themeColor = themeColor,
+                selectedCellColor = selectedCellColor
+            ) {
                 val navController = rememberNavController()
-                val viewModel: MainViewModel = viewModel()
 
                 val pendingUri by pendingFileUri
                 LaunchedEffect(pendingUri) {
