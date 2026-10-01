@@ -256,7 +256,8 @@ fun SettingsScreen(
             item { SwitchSetting("Speak formatting", settings.speakFormatting, currentThemeColor) { viewModel.updateSettings(settings.copy(speakFormatting = it)) } }
             item { SwitchSetting("Speak empty cells", settings.speakEmptyCells, currentThemeColor) { viewModel.updateSettings(settings.copy(speakEmptyCells = it)) } }
             item { SwitchSetting("Speak after editing", settings.speakAfterEditing, currentThemeColor) { viewModel.updateSettings(settings.copy(speakAfterEditing = it)) } }
-            item { SwitchSetting("Vibrate on cell selection", settings.vibrateOnSelect, currentThemeColor) { viewModel.updateSettings(settings.copy(vibrateOnSelect = it)) } }
+            item { SwitchSetting("Vibrate on selection & actions", settings.vibrateOnSelect, currentThemeColor) { viewModel.updateSettings(settings.copy(vibrateOnSelect = it)) } }
+            item { SwitchSetting("Overflow menu 2-step tap mode (announce on 1st tap)", settings.overflowMenuTwoStepMode, currentThemeColor) { viewModel.updateSettings(settings.copy(overflowMenuTwoStepMode = it)) } }
             item { SwitchSetting("Large touch mode", settings.largeTouchMode, currentThemeColor) { viewModel.updateSettings(settings.copy(largeTouchMode = it)) } }
             item { SwitchSetting("High contrast grid", settings.highContrastGrid, currentThemeColor) { viewModel.updateSettings(settings.copy(highContrastGrid = it)) } }
         }

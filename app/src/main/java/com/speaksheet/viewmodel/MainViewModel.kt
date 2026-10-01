@@ -148,6 +148,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateQuickActions(newActions: List<String>) {
+        viewModelScope.launch {
+            val current = appSettings.value
+            settingsRepository.updateSettings(current.copy(quickActionIds = newActions))
+        }
+    }
+
+    fun removeQuickAction(actionId: String) {
+        viewModelScope.launch {
+            val current = appSettings.value
+            val updated = current.quickActionIds.filter { it != actionId }
+            settingsRepository.updateSettings(current.copy(quickActionIds = updated))
+        }
+    }
+
     fun openNewSpreadsheet() {
         val defaultR = appSettings.value.defaultRows
         val defaultC = appSettings.value.defaultCols
@@ -225,44 +240,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             kotlinx.coroutines.delay(400) // Debounce rapid edits and multi-step mutations
             try {
                 val context = getApplication<Application>()
-                // 1. Always keep local app working file updated
-                val docsDir = File(context.filesDir, "spreadsheets").apply { mkdirs() }
-                val localFile = File(docsDir, fileName)
-                spreadsheetEngine.saveToFile(localFile)
-                val targetUriStr = uri?.toString() ?: Uri.fromFile(localFile).toString()
-                recentFileDao.upsertRecentFile(
-                    RecentFile(
-                        uri = targetUriStr,
-                        name = fileName,
-                        path = localFile.absolutePath,
-                        lastModified = System.currentTimeMillis(),
-                        sizeBytes = localFile.length()
-                    )
-                )
+                val targetUriStr = uri?.toString() ?: ""
 
-                val sheetEntities = spreadsheetEngine.sheets.mapIndexed { idx, s ->
-                    com.speaksheet.data.SheetEntity(
-                        fileUri = targetUriStr,
-                        sheetName = s.name,
-                        sheetIndex = idx,
-                        zoom = s.zoom,
-                        scrollX = s.scrollX,
-                        scrollY = s.scrollY,
-                        frozenRows = s.frozenRows,
-                        frozenCols = s.frozenCols
-                    )
-                }
-                sheetDao.replaceSheetsForFile(targetUriStr, sheetEntities)
-
-                // 2. If opened from an external writable content URI (e.g. SAF), write changes back
-                if (uri != null && uri.scheme == "content" && !uri.toString().startsWith("sample://") && !uri.toString().contains("media/external")) {
-                    context.contentResolver.openOutputStream(uri, "w")?.use { out ->
-                        if (fileName.endsWith(".csv", ignoreCase = true)) {
-                            spreadsheetEngine.saveCSV(out)
-                        } else {
-                            spreadsheetEngine.saveXLSX(out)
-                        }
+                // 1. Save Sheet states to Room DB
+                if (targetUriStr.isNotEmpty()) {
+                    val sheetEntities = spreadsheetEngine.sheets.mapIndexed { idx, s ->
+                        com.speaksheet.data.SheetEntity(
+                            fileUri = targetUriStr,
+                            sheetName = s.name,
+                            sheetIndex = idx,
+                            zoom = s.zoom,
+                            scrollX = s.scrollX,
+                            scrollY = s.scrollY,
+                            frozenRows = s.frozenRows,
+                            frozenCols = s.frozenCols
+                        )
                     }
+                    sheetDao.replaceSheetsForFile(targetUriStr, sheetEntities)
+                }
+
+                // 2. Commit in-place to the opened document (content:// or file://)
+                if (uri != null && uri.scheme == "content" && !uri.toString().startsWith("sample://")) {
+                    try {
+                        val stream = context.contentResolver.openOutputStream(uri, "wt")
+                            ?: context.contentResolver.openOutputStream(uri, "w")
+                        stream?.use { out ->
+                            if (fileName.endsWith(".csv", ignoreCase = true)) {
+                                spreadsheetEngine.saveCSV(out)
+                            } else {
+                                spreadsheetEngine.saveXLSX(out)
+                            }
+                        }
+                        recentFileDao.upsertRecentFile(
+                            RecentFile(
+                                uri = uri.toString(),
+                                name = fileName,
+                                path = uri.toString(),
+                                lastModified = System.currentTimeMillis(),
+                                sizeBytes = 0L
+                            )
+                        )
+                    } catch (_: Throwable) {}
+                } else if (uri != null && uri.scheme == "file") {
+                    val filePath = uri.path
+                    if (filePath != null) {
+                        val targetFile = File(filePath)
+                        targetFile.parentFile?.mkdirs()
+                        targetFile.outputStream().use { out ->
+                            if (fileName.endsWith(".csv", ignoreCase = true)) {
+                                spreadsheetEngine.saveCSV(out)
+                            } else {
+                                spreadsheetEngine.saveXLSX(out)
+                            }
+                        }
+                        recentFileDao.upsertRecentFile(
+                            RecentFile(
+                                uri = uri.toString(),
+                                name = fileName,
+                                path = targetFile.absolutePath,
+                                lastModified = System.currentTimeMillis(),
+                                sizeBytes = targetFile.length()
+                            )
+                        )
+                    }
+                } else {
+                    // Fallback for new/unsaved internal document
+                    val docsDir = File(context.filesDir, "spreadsheets").apply { mkdirs() }
+                    val localFile = File(docsDir, fileName)
+                    spreadsheetEngine.saveToFile(localFile)
+                    val localUri = Uri.fromFile(localFile)
+                    _currentFileUri.value = localUri
+                    recentFileDao.upsertRecentFile(
+                        RecentFile(
+                            uri = localUri.toString(),
+                            name = fileName,
+                            path = localFile.absolutePath,
+                            lastModified = System.currentTimeMillis(),
+                            sizeBytes = localFile.length()
+                        )
+                    )
                 }
             } catch (_: Throwable) {
                 // Handled gracefully
@@ -285,122 +341,134 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         autoSaveJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 1. Always ensure local working copy is up to date first
-                try {
-                    val docsDir = File(context.filesDir, "spreadsheets").apply { mkdirs() }
-                    val localFile = File(docsDir, fileName)
-                    spreadsheetEngine.saveToFile(localFile)
-                } catch (_: Throwable) {}
-
-                var savedUri: Uri? = null
-                var displayPath = "Downloads/$fileName"
-                var saveSuccess = false
-
-                // 2. If currently opened from an external writable content URI (e.g. SAF file picker), update it directly
                 val curUri = _currentFileUri.value
-                if (curUri != null && curUri.scheme == "content" && !curUri.toString().startsWith("sample://") && !curUri.toString().contains("media/external")) {
+                var saveSuccess = false
+                var displayPath = fileName
+
+                // 1. If currently opened from an external writable content URI (SAF file picker / File Explorer), update existing file in place!
+                if (curUri != null && curUri.scheme == "content" && !curUri.toString().startsWith("sample://")) {
                     try {
-                        context.contentResolver.openOutputStream(curUri, "w")?.use { out ->
+                        val stream = context.contentResolver.openOutputStream(curUri, "wt")
+                            ?: context.contentResolver.openOutputStream(curUri, "w")
+                        stream?.use { out ->
                             if (isCsv) {
                                 spreadsheetEngine.saveCSV(out)
                             } else {
                                 spreadsheetEngine.saveXLSX(out)
                             }
                             saveSuccess = true
-                            savedUri = curUri
                             displayPath = fileName
                         }
-                    } catch (_: Throwable) {
-                        // Content URI write failed or not permitted, will save to device storage below
-                    }
-                }
-
-                // 3. Save to device's public Downloads storage via MediaStore (Android Q+)
-                if (!saveSuccess && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        val resolver = context.contentResolver
-                        val contentValues = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                            put(MediaStore.MediaColumns.IS_PENDING, 1)
+                        if (saveSuccess) {
+                            recentFileDao.upsertRecentFile(
+                                RecentFile(
+                                    uri = curUri.toString(),
+                                    name = fileName,
+                                    path = curUri.toString(),
+                                    lastModified = System.currentTimeMillis(),
+                                    sizeBytes = 0L
+                                )
+                            )
                         }
-                        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                        val insertedUri = resolver.insert(collection, contentValues)
-                        if (insertedUri != null) {
-                            resolver.openOutputStream(insertedUri, "w")?.use { out ->
+                    } catch (_: Throwable) {
+                        saveSuccess = false
+                    }
+                } else if (curUri != null && curUri.scheme == "file" && !curUri.toString().startsWith("sample://")) {
+                    val filePath = curUri.path
+                    if (filePath != null) {
+                        try {
+                            val targetFile = File(filePath)
+                            targetFile.parentFile?.mkdirs()
+                            targetFile.outputStream().use { out ->
                                 if (isCsv) {
                                     spreadsheetEngine.saveCSV(out)
                                 } else {
                                     spreadsheetEngine.saveXLSX(out)
                                 }
+                                saveSuccess = true
+                                displayPath = fileName
                             }
-                            contentValues.clear()
-                            contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                            resolver.update(insertedUri, contentValues, null, null)
-                            savedUri = insertedUri
-                            displayPath = "Downloads/$fileName"
-                            saveSuccess = true
+                            if (saveSuccess) {
+                                recentFileDao.upsertRecentFile(
+                                    RecentFile(
+                                        uri = curUri.toString(),
+                                        name = fileName,
+                                        path = targetFile.absolutePath,
+                                        lastModified = System.currentTimeMillis(),
+                                        sizeBytes = targetFile.length()
+                                    )
+                                )
+                            }
+                        } catch (_: Throwable) {
+                            saveSuccess = false
                         }
-                    } catch (_: Throwable) {
-                        // MediaStore insert or write failed, will attempt public file storage fallback
                     }
                 }
 
-                // 4. Fallback to direct public Downloads directory
+                // 2. Only if no existing file was open (brand new unsaved document or external content write failed), save to Downloads
                 if (!saveSuccess) {
-                    try {
-                        @Suppress("DEPRECATION")
-                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                        downloadsDir.mkdirs()
-                        val targetFile = File(downloadsDir, fileName)
-                        targetFile.outputStream().use { out ->
-                            if (isCsv) {
-                                spreadsheetEngine.saveCSV(out)
-                            } else {
-                                spreadsheetEngine.saveXLSX(out)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        try {
+                            val resolver = context.contentResolver
+                            val contentValues = ContentValues().apply {
+                                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                                put(MediaStore.MediaColumns.IS_PENDING, 1)
                             }
-                        }
-                        savedUri = Uri.fromFile(targetFile)
-                        displayPath = "Downloads/$fileName"
-                        saveSuccess = true
-                    } catch (_: Throwable) {}
-                }
-
-                // 5. Fallback to app's external Documents directory
-                if (!saveSuccess) {
-                    try {
-                        val extDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
-                        val targetFile = File(extDir, fileName)
-                        targetFile.outputStream().use { out ->
-                            if (isCsv) {
-                                spreadsheetEngine.saveCSV(out)
-                            } else {
-                                spreadsheetEngine.saveXLSX(out)
+                            val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                            val insertedUri = resolver.insert(collection, contentValues)
+                            if (insertedUri != null) {
+                                resolver.openOutputStream(insertedUri, "wt")?.use { out ->
+                                    if (isCsv) {
+                                        spreadsheetEngine.saveCSV(out)
+                                    } else {
+                                        spreadsheetEngine.saveXLSX(out)
+                                    }
+                                }
+                                contentValues.clear()
+                                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                                resolver.update(insertedUri, contentValues, null, null)
+                                _currentFileUri.value = insertedUri
+                                displayPath = "Downloads/$fileName"
+                                saveSuccess = true
+                                recentFileDao.upsertRecentFile(
+                                    RecentFile(
+                                        uri = insertedUri.toString(),
+                                        name = fileName,
+                                        path = insertedUri.toString(),
+                                        lastModified = System.currentTimeMillis(),
+                                        sizeBytes = 15_360L
+                                    )
+                                )
                             }
-                        }
-                        savedUri = Uri.fromFile(targetFile)
-                        displayPath = "Documents/$fileName"
-                        saveSuccess = true
-                    } catch (_: Throwable) {}
-                }
+                        } catch (_: Throwable) {}
+                    }
 
-                if (savedUri != null) {
-                    recentFileDao.upsertRecentFile(
-                        RecentFile(
-                            uri = savedUri.toString(),
-                            name = fileName,
-                            path = displayPath,
-                            lastModified = System.currentTimeMillis(),
-                            sizeBytes = 15_360L
+                    if (!saveSuccess) {
+                        val docsDir = File(context.filesDir, "spreadsheets").apply { mkdirs() }
+                        val localFile = File(docsDir, fileName)
+                        spreadsheetEngine.saveToFile(localFile)
+                        val localUri = Uri.fromFile(localFile)
+                        _currentFileUri.value = localUri
+                        displayPath = fileName
+                        saveSuccess = true
+                        recentFileDao.upsertRecentFile(
+                            RecentFile(
+                                uri = localUri.toString(),
+                                name = fileName,
+                                path = localFile.absolutePath,
+                                lastModified = System.currentTimeMillis(),
+                                sizeBytes = localFile.length()
+                            )
                         )
-                    )
+                    }
                 }
 
                 withContext(Dispatchers.Main) {
                     if (saveSuccess) {
                         onSaved?.invoke(true, displayPath)
-                        ttsManager.speak("Saved to device: $fileName")
+                        ttsManager.speak("Document saved: $fileName")
                     } else {
                         onSaved?.invoke(false, "Could not write to storage")
                         ttsManager.speak("Save failed")

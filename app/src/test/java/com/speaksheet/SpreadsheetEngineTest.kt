@@ -306,4 +306,35 @@ class SpreadsheetEngineTest {
         assertTrue(foundStyles)
         assertTrue(foundSheet)
     }
+
+    @Test
+    fun testQuickActionsDefaults() {
+        val defaultSettings = com.speaksheet.data.AppSettings()
+        assertEquals(4, defaultSettings.quickActionIds.size)
+        assertTrue(defaultSettings.quickActionIds.contains("toggle_italic"))
+        assertTrue(defaultSettings.quickActionIds.contains("cell_text_color"))
+        assertTrue(defaultSettings.quickActionIds.contains("cell_bg_color"))
+        assertTrue(defaultSettings.quickActionIds.contains("convert_to_banner"))
+
+        // Test custom quick actions list
+        val updated = defaultSettings.copy(
+            quickActionIds = listOf("toggle_bold", "freeze_top_row", "formula_sum")
+        )
+        assertEquals(3, updated.quickActionIds.size)
+        assertTrue(updated.quickActionIds.contains("toggle_bold"))
+    }
+
+    @Test
+    fun testOverflowMenuTwoStepModeSetting() {
+        val defaultSettings = com.speaksheet.data.AppSettings()
+        assertTrue(defaultSettings.overflowMenuTwoStepMode)
+        assertTrue(defaultSettings.vibrateOnSelect)
+
+        val singleTapSettings = defaultSettings.copy(
+            overflowMenuTwoStepMode = false,
+            vibrateOnSelect = false
+        )
+        assertFalse(singleTapSettings.overflowMenuTwoStepMode)
+        assertFalse(singleTapSettings.vibrateOnSelect)
+    }
 }

@@ -49,7 +49,9 @@ data class AppSettings(
     val lastActionMenuTab: Int = 0,
     val showGridlines: Boolean = true,
     val themeColor: Int = 0xFF4CAF50.toInt(),
-    val selectedCellColor: Int = 0xFF4CAF50.toInt()
+    val selectedCellColor: Int = 0xFF4CAF50.toInt(),
+    val quickActionIds: List<String> = listOf("toggle_italic", "cell_text_color", "cell_bg_color", "convert_to_banner"),
+    val overflowMenuTwoStepMode: Boolean = true
 )
 
 class SettingsRepository(private val context: Context) {
@@ -78,10 +80,18 @@ class SettingsRepository(private val context: Context) {
         val SHOW_GRIDLINES = booleanPreferencesKey("show_gridlines")
         val THEME_COLOR = intPreferencesKey("theme_color")
         val SELECTED_CELL_COLOR = intPreferencesKey("selected_cell_color")
+        val QUICK_ACTION_IDS = stringPreferencesKey("quick_action_ids")
+        val OVERFLOW_MENU_TWO_STEP = booleanPreferencesKey("overflow_menu_two_step")
     }
 
     val appSettingsFlow: Flow<AppSettings> = context.dataStore.data
         .map { preferences ->
+            val rawQuickActions = preferences[PreferencesKeys.QUICK_ACTION_IDS]
+            val quickActionsList = if (rawQuickActions != null) {
+                if (rawQuickActions.isBlank()) emptyList() else rawQuickActions.split(",").filter { it.isNotBlank() }
+            } else {
+                listOf("toggle_italic", "cell_text_color", "cell_bg_color", "convert_to_banner")
+            }
             AppSettings(
                 voiceName = preferences[PreferencesKeys.VOICE_NAME] ?: "",
                 speechRate = preferences[PreferencesKeys.SPEECH_RATE] ?: 1.0f,
@@ -105,7 +115,9 @@ class SettingsRepository(private val context: Context) {
                 lastActionMenuTab = preferences[PreferencesKeys.LAST_ACTION_MENU_TAB] ?: 0,
                 showGridlines = preferences[PreferencesKeys.SHOW_GRIDLINES] ?: true,
                 themeColor = preferences[PreferencesKeys.THEME_COLOR] ?: 0xFF4CAF50.toInt(),
-                selectedCellColor = preferences[PreferencesKeys.SELECTED_CELL_COLOR] ?: 0xFF4CAF50.toInt()
+                selectedCellColor = preferences[PreferencesKeys.SELECTED_CELL_COLOR] ?: 0xFF4CAF50.toInt(),
+                quickActionIds = quickActionsList,
+                overflowMenuTwoStepMode = preferences[PreferencesKeys.OVERFLOW_MENU_TWO_STEP] ?: true
             )
         }
 
@@ -134,6 +146,8 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_GRIDLINES] = settings.showGridlines
             preferences[PreferencesKeys.THEME_COLOR] = settings.themeColor
             preferences[PreferencesKeys.SELECTED_CELL_COLOR] = settings.selectedCellColor
+            preferences[PreferencesKeys.QUICK_ACTION_IDS] = settings.quickActionIds.joinToString(",")
+            preferences[PreferencesKeys.OVERFLOW_MENU_TWO_STEP] = settings.overflowMenuTwoStepMode
         }
     }
 }

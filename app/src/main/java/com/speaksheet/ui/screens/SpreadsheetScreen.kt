@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.speaksheet.data.DeleteMode
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
@@ -97,6 +98,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.South
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VerticalAlignBottom
@@ -116,11 +118,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -257,6 +261,7 @@ const val MIN_ZOOM = 0.20f
 const val MAX_ZOOM = 3.0f
 
 val ACTION_MENU_TABS = listOf(
+    "Quick Actions",
     "Cell",
     "Alignment & Borders",
     "Clipboard",
@@ -268,16 +273,17 @@ val ACTION_MENU_TABS = listOf(
     "Row",
     "Column"
 )
-const val TAB_INDEX_CELL = 0
-const val TAB_INDEX_ALIGNMENT_BORDERS = 1
-const val TAB_INDEX_CLIPBOARD = 2
-const val TAB_INDEX_BANNER = 3
-const val TAB_INDEX_VIEW = 4
-const val TAB_INDEX_FORMULAS = 5
-const val TAB_INDEX_NUMBER_FORMAT = 6
-const val TAB_INDEX_DATA = 7
-const val TAB_INDEX_ROW = 8
-const val TAB_INDEX_COLUMN = 9
+const val TAB_INDEX_QUICK_ACTIONS = 0
+const val TAB_INDEX_CELL = 1
+const val TAB_INDEX_ALIGNMENT_BORDERS = 2
+const val TAB_INDEX_CLIPBOARD = 3
+const val TAB_INDEX_BANNER = 4
+const val TAB_INDEX_VIEW = 5
+const val TAB_INDEX_FORMULAS = 6
+const val TAB_INDEX_NUMBER_FORMAT = 7
+const val TAB_INDEX_DATA = 8
+const val TAB_INDEX_ROW = 9
+const val TAB_INDEX_COLUMN = 10
 
 data class MenuItemData(
     val title: String,
@@ -285,6 +291,29 @@ data class MenuItemData(
     val actionId: String,
     val subtitle: String? = null
 )
+
+fun getAllActionsMap(
+    r: Int,
+    c: Int,
+    engine: SpreadsheetEngine,
+    settings: com.speaksheet.data.AppSettings
+): Map<String, MenuItemData> {
+    val allList = mutableListOf<MenuItemData>()
+    for (tab in 1..10) {
+        allList.addAll(getActionsForTab(tab, r, c, engine, settings))
+    }
+    return allList.associateBy { it.actionId }
+}
+
+fun getQuickActionsList(
+    r: Int,
+    c: Int,
+    engine: SpreadsheetEngine,
+    settings: com.speaksheet.data.AppSettings
+): List<MenuItemData> {
+    val allMap = getAllActionsMap(r, c, engine, settings)
+    return settings.quickActionIds.mapNotNull { allMap[it] }
+}
 
 fun getActionsForTab(
     tabIndex: Int,
@@ -294,14 +323,17 @@ fun getActionsForTab(
     settings: com.speaksheet.data.AppSettings
 ): List<MenuItemData> {
     return when (tabIndex) {
+        TAB_INDEX_QUICK_ACTIONS -> {
+            getQuickActionsList(r, c, engine, settings)
+        }
         TAB_INDEX_CELL -> listOf(
             MenuItemData("Edit cell", Icons.Default.Edit, "edit"),
             MenuItemData("Clear cell", Icons.Default.Delete, "clear_cell"),
             MenuItemData(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.FormatBold, "toggle_bold"),
             MenuItemData(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.FormatItalic, "toggle_italic"),
             MenuItemData(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.WrapText, "wrap_text"),
-            MenuItemData("Cell color", Icons.Default.Palette, "cell_bg_color"),
-            MenuItemData("Text color", Icons.Default.FormatColorText, "cell_text_color")
+            MenuItemData("Background Color", Icons.Default.Palette, "cell_bg_color"),
+            MenuItemData("Text Color", Icons.Default.FormatColorText, "cell_text_color")
         )
         TAB_INDEX_ALIGNMENT_BORDERS -> listOf(
             MenuItemData("Align left", Icons.AutoMirrored.Filled.FormatAlignLeft, "align_left"),
@@ -321,7 +353,7 @@ fun getActionsForTab(
             MenuItemData("Fill right", Icons.AutoMirrored.Filled.ArrowForward, "fill_right")
         )
         TAB_INDEX_BANNER -> listOf(
-            MenuItemData("To banner", Icons.Default.Edit, "convert_to_banner"),
+            MenuItemData("Banner Row", Icons.Default.Edit, "convert_to_banner"),
             MenuItemData("Unmerge banner", Icons.Default.Clear, "unmerge_banner"),
             MenuItemData("Banner background color", Icons.Default.ColorLens, "banner_color", "Color of the selected banner/divider row"),
             MenuItemData("Header cell background color", Icons.Default.Palette, "header_bg_color", "Background fill color of the header row"),
@@ -377,7 +409,323 @@ fun getActionsForTab(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+fun executeSpreadsheetAction(
+    actionId: String,
+    r: Int,
+    c: Int,
+    engine: SpreadsheetEngine,
+    viewModel: MainViewModel,
+    settings: com.speaksheet.data.AppSettings,
+    context: Context,
+    selectedColumn: Int? = null,
+    onDismiss: () -> Unit = {},
+    onEditCell: (Pair<Int, Int>, String?) -> Unit,
+    onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
+    onOpenZoom: () -> Unit,
+    onOpenFindReplace: () -> Unit,
+    onOpenFilter: (Int) -> Unit,
+    onConfirmClearCol: (Int) -> Unit,
+    onConfirmClearRow: (Int) -> Unit,
+    onConfirmDeleteRow: (Int) -> Unit
+) {
+    when (actionId) {
+        "edit" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), null)
+        }
+        "copy" -> {
+            if (selectedColumn != null) {
+                viewModel.copyColumn(context, selectedColumn)
+            } else {
+                viewModel.copyCell(context, r, c)
+            }
+        }
+        "paste" -> {
+            if (selectedColumn != null) {
+                viewModel.pasteColumn(context, selectedColumn, startRow = 0)
+            } else {
+                viewModel.pasteCell(context, r, c)
+            }
+        }
+        "paste_values" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.VALUES_ONLY)
+        "paste_formats" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMATS_ONLY)
+        "paste_formulas" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMULAS_ONLY)
+        "fill_down" -> viewModel.fillDown(r, c, minOf(r + 5, engine.maxRow - 1), c)
+        "fill_right" -> viewModel.fillRight(r, c, r, minOf(c + 3, engine.maxCol - 1))
+        "clear_cell" -> viewModel.deleteCell(r, c)
+
+        "toggle_bold" -> viewModel.setCellBold(r, c, !engine.getCellBold(r, c))
+        "toggle_italic" -> viewModel.setCellItalic(r, c, !engine.getCellItalic(r, c))
+        "align_left" -> viewModel.setCellAlignment(r, c, 0)
+        "align_center" -> viewModel.setCellAlignment(r, c, 1)
+        "align_right" -> viewModel.setCellAlignment(r, c, 2)
+        "wrap_text" -> viewModel.toggleColumnWrap(c)
+        "cell_bg_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
+        }
+        "cell_text_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
+        }
+
+        "convert_to_banner" -> viewModel.convertRowToBanner(r)
+        "unmerge_banner" -> viewModel.unmergeBanner(r)
+        "border_none" -> viewModel.setCellBorders(r, c, 0)
+        "border_all" -> viewModel.setCellBorders(r, c, 1)
+        "border_outer" -> viewModel.setCellBorders(r, c, 2)
+
+        "freeze_top_row" -> viewModel.setFreezePanes(1, engine.frozenCols)
+        "freeze_first_col" -> viewModel.setFreezePanes(engine.frozenRows, 1)
+        "freeze_selected" -> viewModel.setFreezePanes(r + 1, c + 1)
+        "unfreeze_panes" -> viewModel.setFreezePanes(0, 0)
+        "toggle_gridlines" -> viewModel.updateSettings(settings.copy(showGridlines = !settings.showGridlines))
+        "zoom_controls" -> {
+            onDismiss()
+            onOpenZoom()
+        }
+        "banner_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+        }
+        "header_bg_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Header(r), ColorPickerTab.BACKGROUND)
+        }
+        "header_text_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Header(r), ColorPickerTab.TEXT)
+        }
+
+        "formula_sum" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=SUM(")
+        }
+        "formula_avg" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=AVERAGE(")
+        }
+        "formula_count" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=COUNT(")
+        }
+        "formula_min" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=MIN(")
+        }
+        "formula_max" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=MAX(")
+        }
+        "formula_sort" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=SORT(")
+        }
+        "formula_if" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=IF(")
+        }
+        "formula_vlookup" -> {
+            onDismiss()
+            onEditCell(Pair(r, c), "=VLOOKUP(")
+        }
+
+        "sort_asc" -> viewModel.sortColumn(c, true)
+        "sort_desc" -> viewModel.sortColumn(c, false)
+        "filter" -> {
+            onDismiss()
+            onOpenFilter(c)
+        }
+        "find_replace" -> {
+            onDismiss()
+            onOpenFindReplace()
+        }
+        "fmt_general" -> viewModel.setCellNumberFormat(r, c, "General")
+        "fmt_number" -> viewModel.setCellNumberFormat(r, c, "Number")
+        "fmt_currency" -> viewModel.setCellNumberFormat(r, c, "Currency")
+        "fmt_percent" -> viewModel.setCellNumberFormat(r, c, "Percent")
+        "fmt_date" -> viewModel.setCellNumberFormat(r, c, "Date")
+
+        "insert_row_above" -> viewModel.insertRowAbove(r)
+        "insert_row_below" -> viewModel.insertRowBelow(r)
+        "delete_row" -> {
+            onDismiss()
+            onConfirmDeleteRow(r)
+        }
+        "clear_row" -> {
+            onDismiss()
+            onConfirmClearRow(r)
+        }
+        "row_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
+        }
+        "row_text_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.TEXT)
+        }
+        "set_header_row" -> viewModel.setHeaderRow(r)
+        "clear_header_row" -> viewModel.clearHeaderRow(r)
+        "speak_row" -> viewModel.speakRow(r)
+
+        "speak_column" -> viewModel.speakColumn(c)
+        "column_color" -> {
+            onDismiss()
+            onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
+        }
+        "clear_column" -> {
+            onDismiss()
+            onConfirmClearCol(c)
+        }
+        "delete_column" -> viewModel.clearColumn(c)
+    }
+}
+
+@Composable
+fun QuickActionsCustomizationDialog(
+    currentSelectedIds: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (List<String>) -> Unit,
+    r: Int = 0,
+    c: Int = 0,
+    engine: SpreadsheetEngine,
+    settings: com.speaksheet.data.AppSettings
+) {
+    var selectedIds by remember { mutableStateOf(currentSelectedIds.toSet()) }
+    val categories = remember(r, c) {
+        listOf(
+            "Cell" to getActionsForTab(TAB_INDEX_CELL, r, c, engine, settings),
+            "Alignment & Borders" to getActionsForTab(TAB_INDEX_ALIGNMENT_BORDERS, r, c, engine, settings),
+            "Clipboard" to getActionsForTab(TAB_INDEX_CLIPBOARD, r, c, engine, settings),
+            "Banner" to getActionsForTab(TAB_INDEX_BANNER, r, c, engine, settings),
+            "View" to getActionsForTab(TAB_INDEX_VIEW, r, c, engine, settings),
+            "Formulas" to getActionsForTab(TAB_INDEX_FORMULAS, r, c, engine, settings),
+            "Number Format" to getActionsForTab(TAB_INDEX_NUMBER_FORMAT, r, c, engine, settings),
+            "Data" to getActionsForTab(TAB_INDEX_DATA, r, c, engine, settings),
+            "Row" to getActionsForTab(TAB_INDEX_ROW, r, c, engine, settings),
+            "Column" to getActionsForTab(TAB_INDEX_COLUMN, r, c, engine, settings)
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    tint = GreenPrimary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Customize Quick Actions", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                Text(
+                    "Choose favorite actions from any menu tab to display in your Quick Actions list (saved across restarts).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                ) {
+                    categories.forEach { (categoryName, actions) ->
+                        item {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(4.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 10.dp, bottom = 4.dp)
+                            ) {
+                                Text(
+                                    text = categoryName.uppercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GreenPrimary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                        items(actions, key = { it.actionId }) { action ->
+                            val isChecked = selectedIds.contains(action.actionId)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedIds = if (isChecked) {
+                                            selectedIds - action.actionId
+                                        } else {
+                                            selectedIds + action.actionId
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isChecked,
+                                    onCheckedChange = {
+                                        selectedIds = if (it) selectedIds + action.actionId else selectedIds - action.actionId
+                                    }
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = action.icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = if (isChecked) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = action.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (isChecked) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                    if (!action.subtitle.isNullOrBlank()) {
+                                        Text(
+                                            text = action.subtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(selectedIds.toList())
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                modifier = Modifier.testTag("button_save_custom_quick_actions")
+            ) {
+                Text("Save Favorites (${selectedIds.size})")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("button_cancel_custom_quick_actions")
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ActionMenuSheet(
     onDismiss: () -> Unit,
@@ -398,8 +746,15 @@ fun ActionMenuSheet(
     onConfirmDeleteRow: (Int) -> Unit
 ) {
     val context = LocalContext.current
+    val hapticFeedback = LocalHapticFeedback.current
     val (r, c) = targetCell
     val cellCoord = "${engine.getColumnName(c)}${r + 1}"
+    var showCustomizeDialog by remember { mutableStateOf(false) }
+    var focusedActionId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(pagerState.currentPage) {
+        focusedActionId = null
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -508,217 +863,278 @@ fun ActionMenuSheet(
                     .fillMaxWidth()
                     .height(180.dp)
             ) { page ->
-                val actions = getActionsForTab(page, r, c, engine, settings)
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(actions, key = { it.actionId }) { action ->
-                        Button(
-                            onClick = {
-                                when (action.actionId) {
-                                    "edit" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), null)
-                                    }
-                                    "copy" -> {
-                                        if (selectedColumn != null) {
-                                            viewModel.copyColumn(context, selectedColumn)
-                                        } else {
-                                            viewModel.copyCell(context, r, c)
-                                        }
-                                    }
-                                    "paste" -> {
-                                        if (selectedColumn != null) {
-                                            viewModel.pasteColumn(context, selectedColumn, startRow = 0)
-                                        } else {
-                                            viewModel.pasteCell(context, r, c)
-                                        }
-                                    }
-                                    "paste_values" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.VALUES_ONLY)
-                                    "paste_formats" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMATS_ONLY)
-                                    "paste_formulas" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMULAS_ONLY)
-                                    "fill_down" -> viewModel.fillDown(r, c, minOf(r + 5, engine.maxRow - 1), c)
-                                    "fill_right" -> viewModel.fillRight(r, c, r, minOf(c + 3, engine.maxCol - 1))
-                                    "clear_cell" -> viewModel.deleteCell(r, c)
-
-                                    "toggle_bold" -> viewModel.setCellBold(r, c, !engine.getCellBold(r, c))
-                                    "toggle_italic" -> viewModel.setCellItalic(r, c, !engine.getCellItalic(r, c))
-                                    "align_left" -> viewModel.setCellAlignment(r, c, 0)
-                                    "align_center" -> viewModel.setCellAlignment(r, c, 1)
-                                    "align_right" -> viewModel.setCellAlignment(r, c, 2)
-                                    "wrap_text" -> viewModel.toggleColumnWrap(c)
-                                    "cell_bg_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.BACKGROUND)
-                                    }
-                                    "cell_text_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Cell(r, c), ColorPickerTab.TEXT)
-                                    }
-
-                                    "convert_to_banner" -> viewModel.convertRowToBanner(r)
-                                    "unmerge_banner" -> viewModel.unmergeBanner(r)
-                                    "border_none" -> viewModel.setCellBorders(r, c, 0)
-                                    "border_all" -> viewModel.setCellBorders(r, c, 1)
-                                    "border_outer" -> viewModel.setCellBorders(r, c, 2)
-
-                                    "freeze_top_row" -> viewModel.setFreezePanes(1, engine.frozenCols)
-                                    "freeze_first_col" -> viewModel.setFreezePanes(engine.frozenRows, 1)
-                                    "freeze_selected" -> viewModel.setFreezePanes(r + 1, c + 1)
-                                    "unfreeze_panes" -> viewModel.setFreezePanes(0, 0)
-                                    "toggle_gridlines" -> viewModel.updateSettings(settings.copy(showGridlines = !settings.showGridlines))
-                                    "zoom_controls" -> {
-                                        onDismiss()
-                                        onOpenZoom()
-                                    }
-                                    "banner_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
-                                    }
-                                    "header_bg_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Header(r), ColorPickerTab.BACKGROUND)
-                                    }
-                                    "header_text_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Header(r), ColorPickerTab.TEXT)
-                                    }
-
-                                    "formula_sum" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=SUM(")
-                                    }
-                                    "formula_avg" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=AVERAGE(")
-                                    }
-                                    "formula_count" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=COUNT(")
-                                    }
-                                    "formula_min" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=MIN(")
-                                    }
-                                    "formula_max" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=MAX(")
-                                    }
-                                    "formula_sort" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=SORT(")
-                                    }
-                                    "formula_if" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=IF(")
-                                    }
-                                    "formula_vlookup" -> {
-                                        onDismiss()
-                                        onEditCell(Pair(r, c), "=VLOOKUP(")
-                                    }
-
-                                    "sort_asc" -> viewModel.sortColumn(c, true)
-                                    "sort_desc" -> viewModel.sortColumn(c, false)
-                                    "filter" -> {
-                                        onDismiss()
-                                        onOpenFilter(c)
-                                    }
-                                    "find_replace" -> {
-                                        onDismiss()
-                                        onOpenFindReplace()
-                                    }
-                                    "fmt_general" -> viewModel.setCellNumberFormat(r, c, "General")
-                                    "fmt_number" -> viewModel.setCellNumberFormat(r, c, "Number")
-                                    "fmt_currency" -> viewModel.setCellNumberFormat(r, c, "Currency")
-                                    "fmt_percent" -> viewModel.setCellNumberFormat(r, c, "Percent")
-                                    "fmt_date" -> viewModel.setCellNumberFormat(r, c, "Date")
-
-                                    "insert_row_above" -> viewModel.insertRowAbove(r)
-                                    "insert_row_below" -> viewModel.insertRowBelow(r)
-                                    "delete_row" -> {
-                                        onDismiss()
-                                        onConfirmDeleteRow(r)
-                                    }
-                                    "clear_row" -> {
-                                        onDismiss()
-                                        onConfirmClearRow(r)
-                                    }
-                                    "row_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.BACKGROUND)
-                                    }
-                                    "row_text_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Row(r), ColorPickerTab.TEXT)
-                                    }
-                                    "set_header_row" -> viewModel.setHeaderRow(r)
-                                    "clear_header_row" -> viewModel.clearHeaderRow(r)
-                                    "speak_row" -> viewModel.speakRow(r)
-
-                                    "speak_column" -> viewModel.speakColumn(c)
-                                    "column_color" -> {
-                                        onDismiss()
-                                        onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
-                                    }
-                                    "clear_column" -> {
-                                        onDismiss()
-                                        onConfirmClearCol(c)
-                                    }
-                                    "delete_column" -> viewModel.clearColumn(c)
-                                }
-                            },
+                if (page == TAB_INDEX_QUICK_ACTIONS) {
+                    val quickActions = getActionsForTab(TAB_INDEX_QUICK_ACTIONS, r, c, engine, settings)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp)
+                    ) {
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                                .testTag("action_${action.actionId}")
-                                .semantics { contentDescription = action.title },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                            shape = RoundedCornerShape(8.dp)
+                                .padding(bottom = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
+                            Text(
+                                text = "Tap to apply • Long-press to remove",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            FilledTonalButton(
+                                onClick = { showCustomizeDialog = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .height(26.dp)
+                                    .testTag("button_customize_quick_actions")
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = action.icon,
-                                        contentDescription = null,
-                                        tint = GreenPrimary,
-                                        modifier = Modifier.size(17.dp)
-                                    )
-                                    Spacer(Modifier.width(4.dp))
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("Add / Customize", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        if (quickActions.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        text = action.title,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        "No Quick Actions added yet.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    Spacer(Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { showCustomizeDialog = true },
+                                        colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                                        modifier = Modifier.testTag("button_add_quick_action_empty")
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Add Quick Actions")
+                                    }
                                 }
-                                if (!action.subtitle.isNullOrBlank()) {
-                                    Text(
-                                        text = action.subtitle,
-                                        fontSize = 8.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                        lineHeight = 10.sp
-                                    )
+                            }
+                        } else {
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(3),
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(quickActions, key = { it.actionId }) { action ->
+                                        val isFocused = focusedActionId == action.actionId
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (isFocused) GreenPrimary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
+                                            border = if (isFocused) BorderStroke(2.dp, GreenPrimary) else null,
+                                            tonalElevation = if (isFocused) 6.dp else 2.dp,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp)
+                                                .testTag("action_${action.actionId}")
+                                                .semantics { contentDescription = "${action.title}${if (isFocused) ", selected. Tap again to execute" else ""}. Long press to remove from favorites." }
+                                                .combinedClickable(
+                                                    onClick = {
+                                                        if (focusedActionId != action.actionId) {
+                                                            focusedActionId = action.actionId
+                                                            if (settings.vibrateOnSelect) {
+                                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            }
+                                                            val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
+                                                            viewModel.ttsManager.speak(announceText)
+                                                        } else {
+                                                            if (settings.vibrateOnSelect) {
+                                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            }
+                                                            executeSpreadsheetAction(
+                                                                actionId = action.actionId,
+                                                                r = r,
+                                                                c = c,
+                                                                engine = engine,
+                                                                viewModel = viewModel,
+                                                                settings = settings,
+                                                                context = context,
+                                                                selectedColumn = selectedColumn,
+                                                                onDismiss = onDismiss,
+                                                                onEditCell = onEditCell,
+                                                                onOpenColorPicker = onOpenColorPicker,
+                                                                onOpenZoom = onOpenZoom,
+                                                                onOpenFindReplace = onOpenFindReplace,
+                                                                onOpenFilter = onOpenFilter,
+                                                                onConfirmClearCol = onConfirmClearCol,
+                                                                onConfirmClearRow = onConfirmClearRow,
+                                                                onConfirmDeleteRow = onConfirmDeleteRow
+                                                            )
+                                                        }
+                                                    },
+                                                    onLongClick = {
+                                                        if (settings.vibrateOnSelect) {
+                                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        }
+                                                        viewModel.removeQuickAction(action.actionId)
+                                                        viewModel.ttsManager.speak("Removed ${action.title} from favorites")
+                                                    }
+                                                )
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = action.icon,
+                                                        contentDescription = null,
+                                                        tint = if (isFocused) GreenPrimary else GreenPrimary.copy(alpha = 0.85f),
+                                                        modifier = Modifier.size(17.dp)
+                                                    )
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text(
+                                                        text = action.title,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                                        color = if (isFocused) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                if (!action.subtitle.isNullOrBlank()) {
+                                                    Text(
+                                                        text = action.subtitle,
+                                                        fontSize = 8.sp,
+                                                        color = if (isFocused) GreenPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                        lineHeight = 10.sp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                FloatingActionButton(
+                                    onClick = { showCustomizeDialog = true },
+                                    containerColor = GreenPrimary,
+                                    contentColor = Color.White,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .size(36.dp)
+                                        .testTag("fab_add_quick_action")
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add Quick Action", modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    val actions = getActionsForTab(page, r, c, engine, settings)
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(actions, key = { it.actionId }) { action ->
+                            val isFocused = focusedActionId == action.actionId
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isFocused) GreenPrimary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
+                                border = if (isFocused) BorderStroke(2.dp, GreenPrimary) else null,
+                                tonalElevation = if (isFocused) 6.dp else 2.dp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("action_${action.actionId}")
+                                    .semantics { contentDescription = "${action.title}${if (isFocused) ", selected. Tap again to execute" else ""}" }
+                                    .clickable {
+                                        if (focusedActionId != action.actionId) {
+                                            focusedActionId = action.actionId
+                                            if (settings.vibrateOnSelect) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            }
+                                            val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
+                                            viewModel.ttsManager.speak(announceText)
+                                        } else {
+                                            if (settings.vibrateOnSelect) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            }
+                                            executeSpreadsheetAction(
+                                                actionId = action.actionId,
+                                                r = r,
+                                                c = c,
+                                                engine = engine,
+                                                viewModel = viewModel,
+                                                settings = settings,
+                                                context = context,
+                                                selectedColumn = selectedColumn,
+                                                onDismiss = onDismiss,
+                                                onEditCell = onEditCell,
+                                                onOpenColorPicker = onOpenColorPicker,
+                                                onOpenZoom = onOpenZoom,
+                                                onOpenFindReplace = onOpenFindReplace,
+                                                onOpenFilter = onOpenFilter,
+                                                onConfirmClearCol = onConfirmClearCol,
+                                                onConfirmClearRow = onConfirmClearRow,
+                                                onConfirmDeleteRow = onConfirmDeleteRow
+                                            )
+                                        }
+                                    }
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = action.icon,
+                                            contentDescription = null,
+                                            tint = if (isFocused) GreenPrimary else GreenPrimary.copy(alpha = 0.85f),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = action.title,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isFocused) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (!action.subtitle.isNullOrBlank()) {
+                                        Text(
+                                            text = action.subtitle,
+                                            fontSize = 8.sp,
+                                            color = if (isFocused) GreenPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            lineHeight = 10.sp
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -726,6 +1142,21 @@ fun ActionMenuSheet(
                 }
             }
         }
+    }
+
+    if (showCustomizeDialog) {
+        QuickActionsCustomizationDialog(
+            currentSelectedIds = settings.quickActionIds,
+            onDismiss = { showCustomizeDialog = false },
+            onSave = { newIds ->
+                viewModel.updateQuickActions(newIds)
+                viewModel.ttsManager.speak("Quick actions updated")
+            },
+            r = r,
+            c = c,
+            engine = engine,
+            settings = settings
+        )
     }
 }
 
@@ -889,6 +1320,7 @@ fun SpreadsheetScreen(
     val engine = viewModel.spreadsheetEngine
     val context = LocalContext.current
     val density = LocalDensity.current.density
+    val hapticFeedback = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     
@@ -902,6 +1334,8 @@ fun SpreadsheetScreen(
     var showColumnMenu by remember { mutableStateOf<Int?>(null) }
     var showRowMenu by remember { mutableStateOf<Int?>(null) }
     var colorPickerState by remember { mutableStateOf<ColorPickerState?>(null) }
+    var showQuickActionsCustomizer by remember { mutableStateOf(false) }
+    var focusedOverflowMenuButtonId by remember { mutableStateOf<String?>(null) }
 
     val initialTab = settings.lastActionMenuTab.coerceIn(0, ACTION_MENU_TABS.lastIndex)
     val pagerState = rememberPagerState(
@@ -968,7 +1402,8 @@ fun SpreadsheetScreen(
     
     val currentFileUri by viewModel.currentFileUri.collectAsStateWithLifecycle()
     var showRenameDialog by remember { mutableStateOf(false) }
-    var renameText by remember { mutableStateOf("") }
+    var renameBaseName by remember { mutableStateOf("") }
+    var renameExtension by remember { mutableStateOf("") }
     var showSaveConfirmDialog by remember { mutableStateOf(false) }
     var clearColConfirm by remember { mutableStateOf<Int?>(null) }
     var clearRowConfirm by remember { mutableStateOf<Int?>(null) }
@@ -999,6 +1434,19 @@ fun SpreadsheetScreen(
             val spoken = matches?.firstOrNull()
             if (!spoken.isNullOrBlank()) {
                 viewModel.insertVoiceText(spoken, selectedCell, editingCell)
+            }
+        }
+    }
+
+    val renameSpeechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spoken = matches?.firstOrNull()
+            if (!spoken.isNullOrBlank()) {
+                val cleanSpoken = spoken.trim().replace(Regex("[/\\\\:*?\"<>|]"), "_")
+                renameBaseName = cleanSpoken
             }
         }
     }
@@ -1255,7 +1703,9 @@ fun SpreadsheetScreen(
                     Column(
                         modifier = Modifier
                             .clickable {
-                                renameText = fileName
+                                val dotIdx = fileName.lastIndexOf('.')
+                                renameBaseName = if (dotIdx > 0) fileName.substring(0, dotIdx) else fileName
+                                renameExtension = if (dotIdx > 0) fileName.substring(dotIdx) else ""
                                 showRenameDialog = true
                             }
                             .testTag("spreadsheet_title_header")
@@ -1339,77 +1789,345 @@ fun SpreadsheetScreen(
                         
                         DropdownMenu(
                             expanded = showOptionsMenu,
-                            onDismissRequest = { showOptionsMenu = false },
+                            onDismissRequest = {
+                                showOptionsMenu = false
+                                focusedOverflowMenuButtonId = null
+                            },
                             modifier = Modifier.widthIn(min = 280.dp)
                         ) {
+                            val handleOverflowClick: (String, String, () -> Unit) -> Unit = { itemId, announceText, onExecute ->
+                                if (settings.overflowMenuTwoStepMode) {
+                                    if (focusedOverflowMenuButtonId != itemId) {
+                                        focusedOverflowMenuButtonId = itemId
+                                        if (settings.vibrateOnSelect) {
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            triggerHaptic()
+                                        }
+                                        viewModel.ttsManager.speak(announceText)
+                                    } else {
+                                        focusedOverflowMenuButtonId = null
+                                        if (settings.vibrateOnSelect) {
+                                            triggerHaptic()
+                                        }
+                                        onExecute()
+                                    }
+                                } else {
+                                    focusedOverflowMenuButtonId = null
+                                    if (settings.vibrateOnSelect) {
+                                        triggerHaptic()
+                                    }
+                                    onExecute()
+                                }
+                            }
+
+                            // Quick Actions / Favorites Section
+                            val curR = selectedCell?.first ?: 0
+                            val curC = selectedCell?.second ?: 0
+                            val topQuickActions = getQuickActionsList(curR, curC, engine, settings)
+                            
+                            val isAddHeaderFocused = focusedOverflowMenuButtonId == "menu_add_quick_action"
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Star,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = themeAccentColor
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "Quick Actions",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = themeAccentColor
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        handleOverflowClick("menu_add_quick_action", "Add or customize quick actions") {
+                                            showOptionsMenu = false
+                                            showQuickActionsCustomizer = true
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .background(
+                                            if (isAddHeaderFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .then(
+                                            if (isAddHeaderFocused) Modifier.border(1.5.dp, selectedCellColor, RoundedCornerShape(4.dp))
+                                            else Modifier
+                                        )
+                                        .testTag("menu_add_quick_action_button")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Add,
+                                        contentDescription = "Add / Customize Quick Actions",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = if (isAddHeaderFocused) selectedCellColor else themeAccentColor
+                                    )
+                                }
+                            }
+
+                            if (topQuickActions.isEmpty()) {
+                                val isAddEmptyFocused = focusedOverflowMenuButtonId == "menu_quick_action_add_empty"
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "+ Add Quick Actions",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isAddEmptyFocused) selectedCellColor else themeAccentColor,
+                                            fontWeight = if (isAddEmptyFocused) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        handleOverflowClick("menu_quick_action_add_empty", "Add Quick Actions") {
+                                            showOptionsMenu = false
+                                            showQuickActionsCustomizer = true
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .background(
+                                            if (isAddEmptyFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                        .then(
+                                            if (isAddEmptyFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                            else Modifier
+                                        )
+                                        .testTag("menu_quick_action_add_empty")
+                                )
+                            } else {
+                                topQuickActions.forEach { action ->
+                                    val itemId = "menu_quick_action_${action.actionId}"
+                                    val isFocused = focusedOverflowMenuButtonId == itemId
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    action.icon,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(18.dp),
+                                                    tint = if (isFocused) selectedCellColor else themeAccentColor
+                                                )
+                                                Spacer(Modifier.width(12.dp))
+                                                Column {
+                                                    Text(
+                                                        action.title,
+                                                        fontSize = 14.sp,
+                                                        fontWeight = if (isFocused) FontWeight.Bold else FontWeight.Normal,
+                                                        color = if (isFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    if (!action.subtitle.isNullOrBlank()) {
+                                                        Text(
+                                                            action.subtitle,
+                                                            fontSize = 11.sp,
+                                                            color = if (isFocused) selectedCellColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            val announce = action.title + (if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else "")
+                                            handleOverflowClick(itemId, announce) {
+                                                showOptionsMenu = false
+                                                executeSpreadsheetAction(
+                                                    actionId = action.actionId,
+                                                    r = curR,
+                                                    c = curC,
+                                                    engine = engine,
+                                                    viewModel = viewModel,
+                                                    settings = settings,
+                                                    context = context,
+                                                    selectedColumn = selectedColumn,
+                                                    onDismiss = { showOptionsMenu = false },
+                                                    onEditCell = { cellPair, initialFormula ->
+                                                        editingCell = cellPair
+                                                        if (initialFormula != null) {
+                                                            engine.setCell(cellPair.first, cellPair.second, initialFormula)
+                                                        }
+                                                    },
+                                                    onOpenColorPicker = { target, tab ->
+                                                        colorPickerState = ColorPickerState(target, tab)
+                                                    },
+                                                    onOpenZoom = { showZoomControlsMenu = true },
+                                                    onOpenFindReplace = { showFindReplace = true },
+                                                    onOpenFilter = { col ->
+                                                        filterColIndex = col
+                                                        val dist = engine.getDistinctValuesForColumn(col)
+                                                        filterSelectedValues = dist.toSet()
+                                                    },
+                                                    onConfirmClearCol = { col -> clearColConfirm = col },
+                                                    onConfirmClearRow = { row -> clearRowConfirm = row },
+                                                    onConfirmDeleteRow = { row -> deleteRowConfirm = row }
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            .background(
+                                                if (isFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                                shape = RoundedCornerShape(6.dp)
+                                            )
+                                            .then(
+                                                if (isFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                                else Modifier
+                                            )
+                                            .testTag("menu_quick_action_${action.actionId}")
+                                    )
+                                }
+                            }
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            val isSaveFocused = focusedOverflowMenuButtonId == "menu_save_document"
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isSaveFocused) selectedCellColor else GreenPrimary)
                                         Spacer(Modifier.width(12.dp))
-                                        Text("Quick Save (Downloads)", fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            "Quick Save (Downloads)",
+                                            fontWeight = if (isSaveFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isSaveFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                        )
                                     }
                                 },
                                 onClick = {
-                                    showOptionsMenu = false
-                                    viewModel.saveDocument { success, pathOrError ->
-                                        coroutineScope.launch {
-                                            snackbarHostState.showSnackbar(
-                                                if (success) "Saved to device: $pathOrError" else "Save failed: $pathOrError"
-                                            )
+                                    handleOverflowClick("menu_save_document", "Quick Save to Downloads") {
+                                        showOptionsMenu = false
+                                        viewModel.saveDocument { success, pathOrError ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    if (success) "Saved to device: $pathOrError" else "Save failed: $pathOrError"
+                                                )
+                                            }
                                         }
                                     }
                                 },
-                                modifier = Modifier.testTag("menu_save_document")
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isSaveFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isSaveFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_save_document")
                             )
 
+                            val isSaveAsFocused = focusedOverflowMenuButtonId == "menu_save_as_document"
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
+                                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isSaveAsFocused) selectedCellColor else themeAccentColor)
                                         Spacer(Modifier.width(12.dp))
-                                        Text("Save As... (Choose Location)")
+                                        Text(
+                                            "Save As... (Choose Location)",
+                                            fontWeight = if (isSaveAsFocused) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isSaveAsFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                        )
                                     }
                                 },
                                 onClick = {
-                                    showOptionsMenu = false
-                                    val suggestedName = if (fileName.endsWith(".xlsx", ignoreCase = true) || fileName.endsWith(".csv", ignoreCase = true)) fileName else "$fileName.xlsx"
-                                    saveAsLauncher.launch(suggestedName)
+                                    handleOverflowClick("menu_save_as_document", "Save As, choose location") {
+                                        showOptionsMenu = false
+                                        val suggestedName = if (fileName.endsWith(".xlsx", ignoreCase = true) || fileName.endsWith(".csv", ignoreCase = true)) fileName else "$fileName.xlsx"
+                                        saveAsLauncher.launch(suggestedName)
+                                    }
                                 },
-                                modifier = Modifier.testTag("menu_save_as_document")
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isSaveAsFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isSaveAsFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_save_as_document")
                             )
 
+                            val isRenameFocused = focusedOverflowMenuButtonId == "menu_rename_document"
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(20.dp))
+                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isRenameFocused) selectedCellColor else MaterialTheme.colorScheme.onSurfaceVariant)
                                         Spacer(Modifier.width(12.dp))
-                                        Text("Rename Document")
+                                        Text(
+                                            "Rename Document",
+                                            fontWeight = if (isRenameFocused) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isRenameFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                        )
                                     }
                                 },
                                 onClick = {
-                                    showOptionsMenu = false
-                                    renameText = fileName
-                                    showRenameDialog = true
+                                    handleOverflowClick("menu_rename_document", "Rename Document") {
+                                        showOptionsMenu = false
+                                        val dotIdx = fileName.lastIndexOf('.')
+                                        renameBaseName = if (dotIdx > 0) fileName.substring(0, dotIdx) else fileName
+                                        renameExtension = if (dotIdx > 0) fileName.substring(dotIdx) else ""
+                                        showRenameDialog = true
+                                    }
                                 },
-                                modifier = Modifier.testTag("menu_rename_document")
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isRenameFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isRenameFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_rename_document")
                             )
 
+                            val isNewSpreadsheetFocused = focusedOverflowMenuButtonId == "menu_new_spreadsheet"
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isNewSpreadsheetFocused) selectedCellColor else themeAccentColor)
                                         Spacer(Modifier.width(12.dp))
-                                        Text("New Blank Spreadsheet")
+                                        Text(
+                                            "New Blank Spreadsheet",
+                                            fontWeight = if (isNewSpreadsheetFocused) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isNewSpreadsheetFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                        )
                                     }
                                 },
                                 onClick = {
-                                    showOptionsMenu = false
-                                    viewModel.openNewSpreadsheet()
+                                    handleOverflowClick("menu_new_spreadsheet", "New Blank Spreadsheet") {
+                                        showOptionsMenu = false
+                                        viewModel.openNewSpreadsheet()
+                                    }
                                 },
-                                modifier = Modifier.testTag("menu_new_spreadsheet")
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isNewSpreadsheetFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isNewSpreadsheetFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_new_spreadsheet")
                             )
 
+                            val isSheetsFocused = focusedOverflowMenuButtonId == "menu_sheets"
                             DropdownMenuItem(
                                 text = {
                                     Row(
@@ -1418,17 +2136,21 @@ fun SpreadsheetScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
+                                            Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isSheetsFocused) selectedCellColor else themeAccentColor)
                                             Spacer(Modifier.width(12.dp))
-                                            Text("Sheets", fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                "Sheets",
+                                                fontWeight = if (isSheetsFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                                color = if (isSheetsFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                            )
                                         }
                                         Surface(
                                             shape = RoundedCornerShape(6.dp),
-                                            color = themeAccentColor.copy(alpha = 0.15f)
+                                            color = if (isSheetsFocused) selectedCellColor.copy(alpha = 0.25f) else themeAccentColor.copy(alpha = 0.15f)
                                         ) {
                                             Text(
                                                 text = "${engine.sheets.size}",
-                                                color = themeAccentColor,
+                                                color = if (isSheetsFocused) selectedCellColor else themeAccentColor,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1437,28 +2159,59 @@ fun SpreadsheetScreen(
                                     }
                                 },
                                 onClick = {
-                                    showOptionsMenu = false
-                                    showSheetsDialog = true
+                                    handleOverflowClick("menu_sheets", "Sheets, ${engine.sheets.size} sheets available") {
+                                        showOptionsMenu = false
+                                        showSheetsDialog = true
+                                    }
                                 },
-                                modifier = Modifier.testTag("menu_sheets")
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isSheetsFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isSheetsFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_sheets")
                             )
 
+                            val isFindReplaceFocused = focusedOverflowMenuButtonId == "menu_find_and_replace"
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
+                                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isFindReplaceFocused) selectedCellColor else themeAccentColor)
                                         Spacer(Modifier.width(12.dp))
-                                        Text("Find & Replace", fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            "Find & Replace",
+                                            fontWeight = if (isFindReplaceFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isFindReplaceFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                        )
                                     }
                                 },
                                 onClick = {
-                                    showOptionsMenu = false
-                                    showFindReplace = true
+                                    handleOverflowClick("menu_find_and_replace", "Find and Replace") {
+                                        showOptionsMenu = false
+                                        showFindReplace = true
+                                    }
                                 },
-                                modifier = Modifier.testTag("menu_find_and_replace")
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isFindReplaceFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isFindReplaceFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_find_and_replace")
                             )
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            
+                            val isZoomFocused = focusedOverflowMenuButtonId == "menu_zoom_controls"
                             DropdownMenuItem(
                                 text = {
                                     Row(
@@ -1466,14 +2219,18 @@ fun SpreadsheetScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Zoom Controls", fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            "Zoom Controls",
+                                            fontWeight = if (isZoomFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isZoomFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
+                                        )
                                         Surface(
                                             shape = RoundedCornerShape(6.dp),
-                                            color = themeAccentColor.copy(alpha = 0.15f)
+                                            color = if (isZoomFocused) selectedCellColor.copy(alpha = 0.25f) else themeAccentColor.copy(alpha = 0.15f)
                                         ) {
                                             Text(
                                                 text = "${(userZoom * 100).roundToInt()}%",
-                                                color = themeAccentColor,
+                                                color = if (isZoomFocused) selectedCellColor else themeAccentColor,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1486,19 +2243,32 @@ fun SpreadsheetScreen(
                                         Icons.Default.ZoomIn,
                                         contentDescription = null,
                                         modifier = Modifier.size(20.dp),
-                                        tint = themeAccentColor
+                                        tint = if (isZoomFocused) selectedCellColor else themeAccentColor
                                     )
                                 },
                                 onClick = {
-                                    showOptionsMenu = false
-                                    showZoomControlsMenu = true
+                                    handleOverflowClick("menu_zoom_controls", "Zoom Controls, ${(userZoom * 100).roundToInt()} percent") {
+                                        showOptionsMenu = false
+                                        showZoomControlsMenu = true
+                                    }
                                 },
-                                modifier = Modifier.testTag("menu_zoom_controls")
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isZoomFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isZoomFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_zoom_controls")
                             )
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                             // 1. Column Header Announcement Order
+                            val isColOrderFocused = focusedOverflowMenuButtonId == "menu_toggle_column_first"
                             DropdownMenuItem(
                                 text = {
                                     Row(
@@ -1509,28 +2279,48 @@ fun SpreadsheetScreen(
                                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                             Text(
                                                 "Announce Column Name First",
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = 14.sp
+                                                fontWeight = if (isColOrderFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                color = if (isColOrderFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
                                             )
                                             Text(
                                                 text = if (settings.announceColumnFirst) "Reads column header, then cell" else "Reads cell, then column header",
                                                 fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = if (isColOrderFocused) selectedCellColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                         Switch(
                                             checked = settings.announceColumnFirst,
-                                            onCheckedChange = { viewModel.toggleAnnounceColumnFirst() }
+                                            onCheckedChange = {
+                                                handleOverflowClick("menu_toggle_column_first", "Announce Column Name First, currently ${if (settings.announceColumnFirst) "enabled" else "disabled"}") {
+                                                    viewModel.toggleAnnounceColumnFirst()
+                                                }
+                                            }
                                         )
                                     }
                                 },
-                                onClick = { viewModel.toggleAnnounceColumnFirst() },
-                                modifier = Modifier.testTag("menu_toggle_column_first")
+                                onClick = {
+                                    handleOverflowClick("menu_toggle_column_first", "Announce Column Name First, currently ${if (settings.announceColumnFirst) "enabled" else "disabled"}") {
+                                        viewModel.toggleAnnounceColumnFirst()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isColOrderFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isColOrderFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_toggle_column_first")
                             )
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                             // 2. Show / Hide Left Side Numbers
+                            val isRowNumbersFocused = focusedOverflowMenuButtonId == "menu_toggle_row_numbers"
                             DropdownMenuItem(
                                 text = {
                                     Row(
@@ -1541,23 +2331,42 @@ fun SpreadsheetScreen(
                                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                             Text(
                                                 "Show Left Side Numbers",
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = 14.sp
+                                                fontWeight = if (isRowNumbersFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                color = if (isRowNumbersFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface
                                             )
                                             Text(
                                                 text = if (settings.showRowNumbers) "Row numbers (1, 2, 3...) shown" else "Row numbers hidden",
                                                 fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = if (isRowNumbersFocused) selectedCellColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                         Switch(
                                             checked = settings.showRowNumbers,
-                                            onCheckedChange = { viewModel.toggleShowRowNumbers() }
+                                            onCheckedChange = {
+                                                handleOverflowClick("menu_toggle_row_numbers", "Show Left Side Numbers, currently ${if (settings.showRowNumbers) "enabled" else "disabled"}") {
+                                                    viewModel.toggleShowRowNumbers()
+                                                }
+                                            }
                                         )
                                     }
                                 },
-                                onClick = { viewModel.toggleShowRowNumbers() },
-                                modifier = Modifier.testTag("menu_toggle_row_numbers")
+                                onClick = {
+                                    handleOverflowClick("menu_toggle_row_numbers", "Show Left Side Numbers, currently ${if (settings.showRowNumbers) "enabled" else "disabled"}") {
+                                        viewModel.toggleShowRowNumbers()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .background(
+                                        if (isRowNumbersFocused) selectedCellColor.copy(alpha = 0.22f) else Color.Transparent,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .then(
+                                        if (isRowNumbersFocused) Modifier.border(2.dp, selectedCellColor, RoundedCornerShape(6.dp))
+                                        else Modifier
+                                    )
+                                    .testTag("menu_toggle_row_numbers")
                             )
                         }
                     }
@@ -3187,21 +3996,81 @@ fun SpreadsheetScreen(
     if (showRenameDialog) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text("Rename Spreadsheet") },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Edit, contentDescription = null, tint = themeAccentColor, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Rename Document")
+                }
+            },
             text = {
-                OutlinedTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it },
-                    label = { Text("Spreadsheet Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("rename_document_input")
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Enter a new name for this spreadsheet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = renameBaseName,
+                        onValueChange = { renameBaseName = it },
+                        label = { Text("Document Name") },
+                        singleLine = true,
+                        trailingIcon = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                if (renameExtension.isNotEmpty()) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            text = renameExtension,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(4.dp))
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                            val lang = settings.voiceTypingLanguage.takeIf { it.isNotBlank() } ?: Locale.getDefault().toString()
+                                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
+                                            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak new document name...")
+                                        }
+                                        try {
+                                            renameSpeechLauncher.launch(intent)
+                                        } catch (_: Exception) {
+                                            viewModel.ttsManager.speak("Voice input not available")
+                                        }
+                                    },
+                                    modifier = Modifier.size(36.dp).testTag("rename_mic_button")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Mic,
+                                        contentDescription = "Speak new document name",
+                                        tint = themeAccentColor,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("rename_document_input")
+                    )
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (renameText.isNotBlank()) {
-                            viewModel.renameDocument(renameText)
+                        val trimmedBase = renameBaseName.trim()
+                        if (trimmedBase.isNotBlank()) {
+                            val finalFullName = if (renameExtension.isNotEmpty()) "$trimmedBase$renameExtension" else trimmedBase
+                            viewModel.renameDocument(finalFullName)
                         }
                         showRenameDialog = false
                     },
@@ -3780,6 +4649,23 @@ fun SpreadsheetScreen(
             onConfirmClearCol = { col -> clearColConfirm = col },
             onConfirmClearRow = { row -> clearRowConfirm = row },
             onConfirmDeleteRow = { row -> deleteRowConfirm = row }
+        )
+    }
+
+    if (showQuickActionsCustomizer) {
+        val curR = selectedCell?.first ?: 0
+        val curC = selectedCell?.second ?: 0
+        QuickActionsCustomizationDialog(
+            currentSelectedIds = settings.quickActionIds,
+            onDismiss = { showQuickActionsCustomizer = false },
+            onSave = { newIds ->
+                viewModel.updateQuickActions(newIds)
+                viewModel.ttsManager.speak("Quick actions updated")
+            },
+            r = curR,
+            c = curC,
+            engine = engine,
+            settings = settings
         )
     }
 }

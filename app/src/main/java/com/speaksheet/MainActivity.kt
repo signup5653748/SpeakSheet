@@ -53,9 +53,10 @@ class MainActivity : ComponentActivity() {
                     val fileName = withContext(Dispatchers.IO) {
                         try {
                             val flags = intent?.flags ?: 0
-                            if ((flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0 && uri.scheme == "content") {
+                            val grantFlags = flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                            if (grantFlags != 0 && uri.scheme == "content") {
                                 try {
-                                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    contentResolver.takePersistableUriPermission(uri, grantFlags)
                                 } catch (_: SecurityException) {
                                     // Persistable permission not grantable or not needed
                                 }
