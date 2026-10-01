@@ -591,6 +591,7 @@ fun QuickActionsCustomizationDialog(
     engine: SpreadsheetEngine,
     settings: com.speaksheet.data.AppSettings
 ) {
+    val themeAccentColor = Color(settings.themeColor)
     var selectedIds by remember { mutableStateOf(currentSelectedIds.toSet()) }
     val categories = remember(r, c) {
         listOf(
@@ -614,7 +615,7 @@ fun QuickActionsCustomizationDialog(
                 Icon(
                     imageVector = Icons.Default.Star,
                     contentDescription = null,
-                    tint = GreenPrimary,
+                    tint = themeAccentColor,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(8.dp))
@@ -647,7 +648,7 @@ fun QuickActionsCustomizationDialog(
                                     text = categoryName.uppercase(),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = GreenPrimary,
+                                    color = themeAccentColor,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
@@ -657,6 +658,9 @@ fun QuickActionsCustomizationDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .semantics(mergeDescendants = true) {
+                                        role = androidx.compose.ui.semantics.Role.Checkbox
+                                    }
                                     .clickable {
                                         selectedIds = if (isChecked) {
                                             selectedIds - action.actionId
@@ -678,7 +682,7 @@ fun QuickActionsCustomizationDialog(
                                     imageVector = action.icon,
                                     contentDescription = null,
                                     modifier = Modifier.size(20.dp),
-                                    tint = if (isChecked) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    tint = if (isChecked) themeAccentColor else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(Modifier.width(10.dp))
                                 Column {
@@ -708,7 +712,7 @@ fun QuickActionsCustomizationDialog(
                     onSave(selectedIds.toList())
                     onDismiss()
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                 modifier = Modifier.testTag("button_save_custom_quick_actions")
             ) {
                 Text("Save Favorites (${selectedIds.size})")
@@ -751,6 +755,8 @@ fun ActionMenuSheet(
     val cellCoord = "${engine.getColumnName(c)}${r + 1}"
     var showCustomizeDialog by remember { mutableStateOf(false) }
     var focusedActionId by remember { mutableStateOf<String?>(null) }
+    val themeAccentColor = Color(settings.themeColor)
+    val selectedCellColor = Color(settings.selectedCellColor)
 
     LaunchedEffect(pagerState.currentPage) {
         focusedActionId = null
@@ -778,7 +784,7 @@ fun ActionMenuSheet(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = GreenPrimary
+                        color = themeAccentColor
                     ) {
                         Text(
                             text = cellCoord,
@@ -817,7 +823,7 @@ fun ActionMenuSheet(
                 selectedTabIndex = pagerState.currentPage,
                 edgePadding = 8.dp,
                 containerColor = Color.Transparent,
-                contentColor = GreenPrimary,
+                contentColor = themeAccentColor,
                 divider = {},
                 modifier = Modifier
                     .fillMaxWidth()
@@ -841,7 +847,7 @@ fun ActionMenuSheet(
                                 text = tabName,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                 fontSize = 12.sp,
-                                color = if (isSelected) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isSelected) themeAccentColor else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         },
                         modifier = Modifier
@@ -874,7 +880,6 @@ fun ActionMenuSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
@@ -883,17 +888,6 @@ fun ActionMenuSheet(
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            FilledTonalButton(
-                                onClick = { showCustomizeDialog = true },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier
-                                    .height(26.dp)
-                                    .testTag("button_customize_quick_actions")
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(13.dp))
-                                Spacer(Modifier.width(3.dp))
-                                Text("Add / Customize", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                            }
                         }
 
                         if (quickActions.isEmpty()) {
@@ -912,7 +906,7 @@ fun ActionMenuSheet(
                                     Spacer(Modifier.height(8.dp))
                                     Button(
                                         onClick = { showCustomizeDialog = true },
-                                        colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                                        colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                                         modifier = Modifier.testTag("button_add_quick_action_empty")
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -933,24 +927,53 @@ fun ActionMenuSheet(
                                         val isFocused = focusedActionId == action.actionId
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
-                                            color = if (isFocused) GreenPrimary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
-                                            border = if (isFocused) BorderStroke(2.dp, GreenPrimary) else null,
+                                            color = if (isFocused) selectedCellColor.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
+                                            border = if (isFocused) BorderStroke(2.dp, selectedCellColor) else null,
                                             tonalElevation = if (isFocused) 6.dp else 2.dp,
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .heightIn(min = 48.dp)
                                                 .testTag("action_${action.actionId}")
-                                                .semantics { contentDescription = "${action.title}${if (isFocused) ", selected. Tap again to execute" else ""}. Long press to remove from favorites." }
+                                                .semantics(mergeDescendants = true) {
+                                                    role = androidx.compose.ui.semantics.Role.Button
+                                                    contentDescription = action.title + (if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else "") + (if (isFocused) ", selected. Tap again to execute" else "") + ". Long press to remove from favorites."
+                                                }
                                                 .combinedClickable(
                                                     onClick = {
-                                                        if (focusedActionId != action.actionId) {
-                                                            focusedActionId = action.actionId
-                                                            if (settings.vibrateOnSelect) {
-                                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        if (settings.overflowMenuTwoStepMode) {
+                                                            if (focusedActionId != action.actionId) {
+                                                                focusedActionId = action.actionId
+                                                                if (settings.vibrateOnSelect) {
+                                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                }
+                                                                val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
+                                                                viewModel.ttsManager.speak(announceText)
+                                                            } else {
+                                                                if (settings.vibrateOnSelect) {
+                                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                }
+                                                                executeSpreadsheetAction(
+                                                                    actionId = action.actionId,
+                                                                    r = r,
+                                                                    c = c,
+                                                                    engine = engine,
+                                                                    viewModel = viewModel,
+                                                                    settings = settings,
+                                                                    context = context,
+                                                                    selectedColumn = selectedColumn,
+                                                                    onDismiss = onDismiss,
+                                                                    onEditCell = onEditCell,
+                                                                    onOpenColorPicker = onOpenColorPicker,
+                                                                    onOpenZoom = onOpenZoom,
+                                                                    onOpenFindReplace = onOpenFindReplace,
+                                                                    onOpenFilter = onOpenFilter,
+                                                                    onConfirmClearCol = onConfirmClearCol,
+                                                                    onConfirmClearRow = onConfirmClearRow,
+                                                                    onConfirmDeleteRow = onConfirmDeleteRow
+                                                                )
                                                             }
-                                                            val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
-                                                            viewModel.ttsManager.speak(announceText)
                                                         } else {
+                                                            focusedActionId = null
                                                             if (settings.vibrateOnSelect) {
                                                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                             }
@@ -999,7 +1022,7 @@ fun ActionMenuSheet(
                                                     Icon(
                                                         imageVector = action.icon,
                                                         contentDescription = null,
-                                                        tint = if (isFocused) GreenPrimary else GreenPrimary.copy(alpha = 0.85f),
+                                                        tint = if (isFocused) selectedCellColor else themeAccentColor.copy(alpha = 0.85f),
                                                         modifier = Modifier.size(17.dp)
                                                     )
                                                     Spacer(Modifier.width(4.dp))
@@ -1007,7 +1030,7 @@ fun ActionMenuSheet(
                                                         text = action.title,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
-                                                        color = if (isFocused) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        color = if (isFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -1016,7 +1039,7 @@ fun ActionMenuSheet(
                                                     Text(
                                                         text = action.subtitle,
                                                         fontSize = 8.sp,
-                                                        color = if (isFocused) GreenPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                        color = if (isFocused) selectedCellColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis,
                                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1030,11 +1053,15 @@ fun ActionMenuSheet(
 
                                 FloatingActionButton(
                                     onClick = { showCustomizeDialog = true },
-                                    containerColor = GreenPrimary,
+                                    containerColor = themeAccentColor,
                                     contentColor = Color.White,
                                     modifier = Modifier
                                         .align(Alignment.BottomEnd)
                                         .size(36.dp)
+                                        .semantics {
+                                            role = androidx.compose.ui.semantics.Role.Button
+                                            contentDescription = "Add Quick Action"
+                                        }
                                         .testTag("fab_add_quick_action")
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "Add Quick Action", modifier = Modifier.size(20.dp))
@@ -1056,23 +1083,52 @@ fun ActionMenuSheet(
                             val isFocused = focusedActionId == action.actionId
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (isFocused) GreenPrimary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
-                                border = if (isFocused) BorderStroke(2.dp, GreenPrimary) else null,
+                                color = if (isFocused) selectedCellColor.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
+                                border = if (isFocused) BorderStroke(2.dp, selectedCellColor) else null,
                                 tonalElevation = if (isFocused) 6.dp else 2.dp,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 48.dp)
                                     .testTag("action_${action.actionId}")
-                                    .semantics { contentDescription = "${action.title}${if (isFocused) ", selected. Tap again to execute" else ""}" }
+                                    .semantics(mergeDescendants = true) {
+                                        role = androidx.compose.ui.semantics.Role.Button
+                                        contentDescription = action.title + (if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else "") + (if (isFocused) ", selected. Tap again to execute" else "")
+                                    }
                                     .clickable {
-                                        if (focusedActionId != action.actionId) {
-                                            focusedActionId = action.actionId
-                                            if (settings.vibrateOnSelect) {
-                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (settings.overflowMenuTwoStepMode) {
+                                            if (focusedActionId != action.actionId) {
+                                                focusedActionId = action.actionId
+                                                if (settings.vibrateOnSelect) {
+                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                }
+                                                val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
+                                                viewModel.ttsManager.speak(announceText)
+                                            } else {
+                                                if (settings.vibrateOnSelect) {
+                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                }
+                                                executeSpreadsheetAction(
+                                                    actionId = action.actionId,
+                                                    r = r,
+                                                    c = c,
+                                                    engine = engine,
+                                                    viewModel = viewModel,
+                                                    settings = settings,
+                                                    context = context,
+                                                    selectedColumn = selectedColumn,
+                                                    onDismiss = onDismiss,
+                                                    onEditCell = onEditCell,
+                                                    onOpenColorPicker = onOpenColorPicker,
+                                                    onOpenZoom = onOpenZoom,
+                                                    onOpenFindReplace = onOpenFindReplace,
+                                                    onOpenFilter = onOpenFilter,
+                                                    onConfirmClearCol = onConfirmClearCol,
+                                                    onConfirmClearRow = onConfirmClearRow,
+                                                    onConfirmDeleteRow = onConfirmDeleteRow
+                                                )
                                             }
-                                            val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
-                                            viewModel.ttsManager.speak(announceText)
                                         } else {
+                                            focusedActionId = null
                                             if (settings.vibrateOnSelect) {
                                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                             }
@@ -1111,7 +1167,7 @@ fun ActionMenuSheet(
                                         Icon(
                                             imageVector = action.icon,
                                             contentDescription = null,
-                                            tint = if (isFocused) GreenPrimary else GreenPrimary.copy(alpha = 0.85f),
+                                            tint = if (isFocused) selectedCellColor else themeAccentColor.copy(alpha = 0.85f),
                                             modifier = Modifier.size(17.dp)
                                         )
                                         Spacer(Modifier.width(4.dp))
@@ -1119,7 +1175,7 @@ fun ActionMenuSheet(
                                             text = action.title,
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
-                                            color = if (isFocused) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = if (isFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -1128,7 +1184,7 @@ fun ActionMenuSheet(
                                         Text(
                                             text = action.subtitle,
                                             fontSize = 8.sp,
-                                            color = if (isFocused) GreenPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            color = if (isFocused) selectedCellColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
