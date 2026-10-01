@@ -209,4 +209,101 @@ class SpreadsheetEngineTest {
         assertTrue(loaded)
         assertEquals("Annual Performance & Departmental Operations Report", newEngine.getCellValue(0, 0))
     }
+
+    @Test
+    fun testCellColorSingleStepUndo() {
+        val initialRed = 0xFFFF0000.toInt()
+        val yellow = 0xFFFFFF00.toInt()
+
+        // Set initial color
+        engine.setCellColor(0, 0, initialRed)
+        assertEquals(initialRed, engine.getCellColor(0, 0))
+
+        // Simulate picking yellow: push exactly one undo entry for the final confirmed color
+        engine.pushUndo("Background color A1")
+        engine.setCellColor(0, 0, yellow)
+        assertEquals(yellow, engine.getCellColor(0, 0))
+
+        // Verify single Undo returns directly to initialRed in one step
+        assertTrue(engine.canUndo)
+        engine.undo()
+        assertEquals(initialRed, engine.getCellColor(0, 0))
+        assertFalse(engine.canUndo)
+    }
+
+    @Test
+    fun testRowAndColumnColorSingleStepUndo() {
+        val originalColColor = 0xFF00FF00.toInt()
+        val newColColor = 0xFF0000FF.toInt()
+
+        engine.setColumnColor(1, originalColColor)
+        assertEquals(originalColColor, engine.getColumnColor(1))
+
+        // Confirm color picker commit pushes exactly one undo
+        engine.pushUndo("Column color B")
+        engine.setColumnColor(1, newColColor)
+        assertEquals(newColColor, engine.getColumnColor(1))
+
+        // 1 undo restores original color
+        engine.undo()
+        assertEquals(originalColColor, engine.getColumnColor(1))
+
+        // Row color test
+        val originalRowColor = 0xFF123456.toInt()
+        val newRowColor = 0xFF654321.toInt()
+        engine.setRowColor(2, originalRowColor)
+        assertEquals(originalRowColor, engine.getRowColor(2))
+
+        engine.pushUndo("Row color 3")
+        engine.setRowColor(2, newRowColor)
+        assertEquals(newRowColor, engine.getRowColor(2))
+
+        engine.undo()
+        assertEquals(originalRowColor, engine.getRowColor(2))
+    }
+
+    @Test
+    fun testXLSXExportStylingAndWrap() {
+        engine.setCell(0, 0, "Styled Header")
+        engine.setHeaderRow(0)
+        engine.setHeaderBgColor(0xFF2E7D32.toInt())
+        engine.setHeaderTextColor(0xFFFFFFFF.toInt())
+
+        engine.setCell(1, 0, "Wrapped Text In Cell")
+        engine.toggleColumnWrap(0)
+        engine.setCellColor(1, 0, 0xFFFFF59D.toInt())
+        engine.setCellBold(1, 0, true)
+
+        val out = ByteArrayOutputStream()
+        engine.saveXLSX(out)
+        val bytes = out.toByteArray()
+        assertTrue(bytes.isNotEmpty())
+
+        // Verify ZIP contains styles.xml with cellXfs, applyAlignment, and fills
+        val zipIn = java.util.zip.ZipInputStream(ByteArrayInputStream(bytes))
+        var foundStyles = false
+        var foundSheet = false
+        var entry = zipIn.nextEntry
+        while (entry != null) {
+            if (entry.name == "xl/styles.xml") {
+                foundStyles = true
+                val stylesContent = zipIn.bufferedReader().readText()
+                assertTrue(stylesContent.contains("applyAlignment=\"1\""))
+                assertTrue(stylesContent.contains("wrapText=\"1\""))
+                assertTrue(stylesContent.contains("applyFill=\"1\""))
+                assertTrue(stylesContent.contains("patternType=\"solid\""))
+            } else if (entry.name == "xl/worksheets/sheet1.xml") {
+                foundSheet = true
+                val sheetContent = zipIn.bufferedReader().readText()
+                assertTrue(sheetContent.contains("<cols>"))
+                assertTrue(sheetContent.contains("<col min=\"1\" max=\"1\""))
+                assertTrue(sheetContent.contains("customWidth=\"1\""))
+                assertTrue(sheetContent.contains("<row r=\"1\""))
+                assertTrue(sheetContent.contains("customHeight=\"1\""))
+            }
+            entry = zipIn.nextEntry
+        }
+        assertTrue(foundStyles)
+        assertTrue(foundSheet)
+    }
 }

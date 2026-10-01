@@ -1391,12 +1391,14 @@ class SpreadsheetEngine {
 
         for (sheet in allSheets) {
             for (r in 0 until sheet.maxRow) {
+                val isHeaderRow = sheet.headerRows.contains(r)
+                val isBannerRow = sheet.mergedRanges.any { it.startRow == r && it.endRow == r && it.startCol == 0 && (it.endCol >= sheet.maxCol - 2 || it.endCol >= 3) }
                 for (c in 0 until sheet.maxCol) {
                     val key = cellKey(r, c)
                     val raw = sheet.cells[key]?.raw ?: ""
-                    val hasColor = sheet.cellColors.containsKey(key) || sheet.columnColors.containsKey(c) || sheet.rowColors.containsKey(r)
-                    val hasTextColor = sheet.cellTextColors.containsKey(key) || sheet.columnTextColors.containsKey(c) || sheet.rowTextColors.containsKey(r)
-                    val isBold = sheet.cellBold[key] == true
+                    val hasColor = sheet.cellColors.containsKey(key) || sheet.columnColors.containsKey(c) || sheet.rowColors.containsKey(r) || (isHeaderRow && sheet.headerBgColor != null)
+                    val hasTextColor = sheet.cellTextColors.containsKey(key) || sheet.columnTextColors.containsKey(c) || sheet.rowTextColors.containsKey(r) || (isHeaderRow && sheet.headerTextColor != null)
+                    val isBold = sheet.cellBold[key] == true || isHeaderRow || isBannerRow
                     val isItalic = sheet.cellItalic[key] == true
                     val align = sheet.cellAlign[key] ?: 0
                     val numFmt = sheet.cellNumFmt[key] ?: "General"
@@ -1404,11 +1406,11 @@ class SpreadsheetEngine {
                     val isWrap = if (c in sheet.wrapEnabled.indices) sheet.wrapEnabled[c] else false
 
                     if (raw.isNotEmpty() || hasColor || hasTextColor || isBold || isItalic || align != 0 || numFmt != "General" || border != 0 || isWrap) {
-                        val textColor = sheet.cellTextColors[key] ?: sheet.columnTextColors[c] ?: sheet.rowTextColors[r]
+                        val textColor = sheet.cellTextColors[key] ?: sheet.columnTextColors[c] ?: sheet.rowTextColors[r] ?: if (isHeaderRow) sheet.headerTextColor else null
                         val fontTriple = Triple(isBold, isItalic, textColor)
                         val fontId = fontMap.getOrPut(fontTriple) { fontMap.size }
 
-                        val bgColor = sheet.cellColors[key] ?: sheet.columnColors[c] ?: sheet.rowColors[r]
+                        val bgColor = sheet.cellColors[key] ?: sheet.columnColors[c] ?: sheet.rowColors[r] ?: if (isHeaderRow) sheet.headerBgColor else null
                         val fillId = if (bgColor != null) {
                             fillMap.getOrPut(bgColor) { fillMap.size + 2 }
                         } else {
@@ -1493,7 +1495,7 @@ class SpreadsheetEngine {
             if (italic) stylesXml.append("<i/>")
             stylesXml.append("<sz val=\"11\"/><name val=\"Calibri\"/>")
             if (color != null) {
-                val hex = String.format(Locale.ROOT, "%08X", color)
+                val hex = String.format(Locale.ROOT, "%08X", color or 0xFF000000.toInt())
                 stylesXml.append("<color rgb=\"$hex\"/>")
             }
             stylesXml.append("</font>\n")
@@ -1506,7 +1508,7 @@ class SpreadsheetEngine {
         stylesXml.append("<fill><patternFill patternType=\"none\"/></fill>\n")
         stylesXml.append("<fill><patternFill patternType=\"gray125\"/></fill>\n")
         for ((colorInt, _) in fillMap) {
-            val hex = String.format(Locale.ROOT, "%08X", colorInt)
+            val hex = String.format(Locale.ROOT, "%08X", colorInt or 0xFF000000.toInt())
             stylesXml.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"$hex\"/><bgColor indexed=\"64\"/></patternFill></fill>\n")
         }
         stylesXml.append("</fills>\n")
@@ -1533,7 +1535,8 @@ class SpreadsheetEngine {
             val applyFill = if (xf.fillId > 0) " applyFill=\"1\"" else ""
             val applyBorder = if (xf.borderId > 0) " applyBorder=\"1\"" else ""
             val applyNumFmt = if (xf.numFmtId > 0) " applyNumberFormat=\"1\"" else ""
-            stylesXml.append("<xf numFmtId=\"${xf.numFmtId}\" fontId=\"${xf.fontId}\" fillId=\"${xf.fillId}\" borderId=\"${xf.borderId}\" xfId=\"0\"$applyFont$applyFill$applyBorder$applyNumFmt>")
+            val applyAlignment = if (xf.align != 0 || xf.wrapText) " applyAlignment=\"1\"" else ""
+            stylesXml.append("<xf numFmtId=\"${xf.numFmtId}\" fontId=\"${xf.fontId}\" fillId=\"${xf.fillId}\" borderId=\"${xf.borderId}\" xfId=\"0\"$applyFont$applyFill$applyBorder$applyNumFmt$applyAlignment>")
             stylesXml.append("<alignment horizontal=\"$horiz\"${if (xf.wrapText) " wrapText=\"1\"" else ""}/>")
             stylesXml.append("</xf>\n")
         }
@@ -1555,9 +1558,20 @@ class SpreadsheetEngine {
             }
             sheetXml.append("</sheetView></sheetViews>\n")
 
+            // Column Widths (<cols>)
+            sheetXml.append("<cols>\n")
+            for (c in 0 until sheet.maxCol) {
+                val colWidthDp = getColWidthDp(c)
+                val excelWidth = (colWidthDp / 7.5f).coerceIn(4f, 255f)
+                sheetXml.append("<col min=\"${c + 1}\" max=\"${c + 1}\" width=\"${String.format(Locale.ROOT, "%.2f", excelWidth)}\" customWidth=\"1\"/>\n")
+            }
+            sheetXml.append("</cols>\n")
+
             // sheetData
             sheetXml.append("<sheetData>\n")
             for (r in 0 until sheet.maxRow) {
+                val isHeaderRow = sheet.headerRows.contains(r)
+                val isBannerRow = sheet.mergedRanges.any { it.startRow == r && it.endRow == r && it.startCol == 0 && (it.endCol >= sheet.maxCol - 2 || it.endCol >= 3) }
                 var rowHasData = false
                 for (c in 0 until sheet.maxCol) {
                     val key = cellKey(r, c)
@@ -1565,6 +1579,8 @@ class SpreadsheetEngine {
                         sheet.cellColors.containsKey(key) ||
                         sheet.columnColors.containsKey(c) ||
                         sheet.rowColors.containsKey(r) ||
+                        (isHeaderRow && sheet.headerBgColor != null) ||
+                        (isHeaderRow && sheet.headerTextColor != null) ||
                         sheet.cellBold.containsKey(key) ||
                         sheet.cellItalic.containsKey(key) ||
                         sheet.cellAlign.containsKey(key) ||
@@ -1576,16 +1592,21 @@ class SpreadsheetEngine {
                     }
                 }
                 if (rowHasData) {
-                    sheetXml.append("<row r=\"${r + 1}\">")
+                    val rowHeightDp = getRowHeightDp(r)
+                    val rowHtPt = (rowHeightDp * 0.75f).coerceAtLeast(15f)
+                    sheetXml.append("<row r=\"${r + 1}\" ht=\"${String.format(Locale.ROOT, "%.2f", rowHtPt)}\" customHeight=\"1\">")
                     for (c in 0 until sheet.maxCol) {
                         val key = cellKey(r, c)
                         val raw = sheet.cells[key]?.raw ?: ""
                         val disp = getCellValue(r, c)
                         val ref = getColumnName(c) + (r + 1)
 
-                        val textColor = sheet.cellTextColors[key] ?: sheet.columnTextColors[c] ?: sheet.rowTextColors[r]
-                        val fontId = fontMap[Triple(sheet.cellBold[key] == true, sheet.cellItalic[key] == true, textColor)] ?: 0
-                        val bgColor = sheet.cellColors[key] ?: sheet.columnColors[c] ?: sheet.rowColors[r]
+                        val textColor = sheet.cellTextColors[key] ?: sheet.columnTextColors[c] ?: sheet.rowTextColors[r] ?: if (isHeaderRow) sheet.headerTextColor else null
+                        val isBold = sheet.cellBold[key] == true || isHeaderRow || isBannerRow
+                        val isItalic = sheet.cellItalic[key] == true
+                        val fontId = fontMap[Triple(isBold, isItalic, textColor)] ?: 0
+
+                        val bgColor = sheet.cellColors[key] ?: sheet.columnColors[c] ?: sheet.rowColors[r] ?: if (isHeaderRow) sheet.headerBgColor else null
                         val fillId = if (bgColor != null) fillMap[bgColor] ?: 0 else 0
                         val numFmtId = getNumFmtId(sheet.cellNumFmt[key] ?: "General")
                         val borderId = if ((sheet.cellBorders[key] ?: 0) > 0) 1 else 0
@@ -1598,11 +1619,11 @@ class SpreadsheetEngine {
                         if (raw.startsWith("=")) {
                             val fClean = raw.removePrefix("=").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                             sheetXml.append("<c r=\"$ref\"$sAttr><f>$fClean</f><v>$disp</v></c>")
-                        } else if (raw.toDoubleOrNull() != null) {
+                        } else if (raw.toDoubleOrNull() != null && !(raw.startsWith("0") && raw.length > 1 && !raw.contains("."))) {
                             sheetXml.append("<c r=\"$ref\"$sAttr><v>$raw</v></c>")
                         } else if (raw.isNotEmpty()) {
                             val escaped = raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                            sheetXml.append("<c r=\"$ref\"$sAttr t=\"inlineStr\"><is><t>$escaped</t></is></c>")
+                            sheetXml.append("<c r=\"$ref\"$sAttr t=\"inlineStr\"><is><t xml:space=\"preserve\">$escaped</t></is></c>")
                         } else if (sIdx > 0) {
                             sheetXml.append("<c r=\"$ref\"$sAttr/>")
                         }

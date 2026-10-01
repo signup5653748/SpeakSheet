@@ -55,9 +55,22 @@ class TtsManager(context: Context) : TextToSpeech.OnInitListener {
 
     private fun loadAvailableVoices() {
         try {
-            val voices = tts?.voices?.toList()?.filter { !it.isNetworkConnectionRequired }
-            if (voices != null) {
-                _availableVoices.value = voices.sortedBy { it.locale.displayName }
+            val allVoices = tts?.voices?.toList() ?: emptyList()
+            val filtered = allVoices.filter { !it.isNetworkConnectionRequired }
+            val sorted = filtered.sortedWith(
+                compareByDescending<Voice> { it.quality }
+                    .thenBy { it.locale.displayName }
+            )
+            _availableVoices.value = sorted
+
+            // Auto-select best on-device high-quality voice if none currently selected
+            if (tts?.voice == null || tts?.voice?.quality ?: 0 < Voice.QUALITY_HIGH) {
+                val bestVoice = sorted.firstOrNull { 
+                    it.locale.language == Locale.getDefault().language && it.quality >= Voice.QUALITY_NORMAL 
+                } ?: sorted.firstOrNull { it.quality >= Voice.QUALITY_NORMAL }
+                if (bestVoice != null) {
+                    tts?.voice = bestVoice
+                }
             }
         } catch (e: Exception) {
             Log.e("TtsManager", "Error loading voices", e)

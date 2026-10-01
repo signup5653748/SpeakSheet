@@ -387,6 +387,7 @@ fun ActionMenuSheet(
     viewModel: MainViewModel,
     settings: com.speaksheet.data.AppSettings,
     coroutineScope: kotlinx.coroutines.CoroutineScope,
+    selectedColumn: Int? = null,
     onEditCell: (Pair<Int, Int>, String?) -> Unit,
     onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
     onOpenZoom: () -> Unit,
@@ -524,8 +525,20 @@ fun ActionMenuSheet(
                                         onDismiss()
                                         onEditCell(Pair(r, c), null)
                                     }
-                                    "copy" -> viewModel.copyCell(context, r, c)
-                                    "paste" -> viewModel.pasteCell(context, r, c)
+                                    "copy" -> {
+                                        if (selectedColumn != null) {
+                                            viewModel.copyColumn(context, selectedColumn)
+                                        } else {
+                                            viewModel.copyCell(context, r, c)
+                                        }
+                                    }
+                                    "paste" -> {
+                                        if (selectedColumn != null) {
+                                            viewModel.pasteColumn(context, selectedColumn, startRow = 0)
+                                        } else {
+                                            viewModel.pasteCell(context, r, c)
+                                        }
+                                    }
                                     "paste_values" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.VALUES_ONLY)
                                     "paste_formats" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMATS_ONLY)
                                     "paste_formulas" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMULAS_ONLY)
@@ -880,6 +893,7 @@ fun SpreadsheetScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     
     var selectedCell by remember { mutableStateOf<Pair<Int, Int>?>(Pair(0, 0)) }
+    var selectedColumn by remember { mutableStateOf<Int?>(null) }
     var editingCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showMenuForCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showActionMenuSheet by remember { mutableStateOf(false) }
@@ -1009,6 +1023,7 @@ fun SpreadsheetScreen(
 
     LaunchedEffect(currentFileUri, fileName) {
         selectedCell = Pair(0, 0)
+        selectedColumn = null
         editingCell = null
         userZoom = 1.0f
         animPanOffset.snapTo(Offset.Zero)
@@ -1061,7 +1076,8 @@ fun SpreadsheetScreen(
     val headerStyleSelected = remember(headerStyle, themeAccentColor) { headerStyle.copy(color = themeAccentColor) }
 
     val gridColor = if (settings.highContrastGrid) Color(0xFF888888) else Color(0xFF444444)
-    val headerBg = MaterialTheme.colorScheme.surface
+    val defaultHeaderBg = themeAccentColor.copy(alpha = 0.22f)
+    val headerBg = if (engine.headerBgColor != null) Color(engine.headerBgColor!!) else defaultHeaderBg
     val highlightFill = selectedCellColor.copy(alpha = 0.22f)
     val defaultBannerBg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
 
@@ -1216,6 +1232,7 @@ fun SpreadsheetScreen(
 
     // Smooth navigation with clear landing feedback mapped to current scale & offset
     fun moveSelection(deltaRow: Int, deltaCol: Int) {
+        selectedColumn = null
         val current = selectedCell ?: Pair(0, 0)
         val newR = (current.first + deltaRow).coerceIn(0, engine.maxRow - 1)
         var newC = (current.second + deltaCol).coerceIn(0, engine.maxCol - 1)
@@ -1349,14 +1366,15 @@ fun SpreadsheetScreen(
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
                                         Spacer(Modifier.width(12.dp))
                                         Text("Save As... (Choose Location)")
                                     }
                                 },
                                 onClick = {
                                     showOptionsMenu = false
-                                    saveAsLauncher.launch(fileName)
+                                    val suggestedName = if (fileName.endsWith(".xlsx", ignoreCase = true) || fileName.endsWith(".csv", ignoreCase = true)) fileName else "$fileName.xlsx"
+                                    saveAsLauncher.launch(suggestedName)
                                 },
                                 modifier = Modifier.testTag("menu_save_as_document")
                             )
@@ -1380,7 +1398,7 @@ fun SpreadsheetScreen(
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
                                         Spacer(Modifier.width(12.dp))
                                         Text("New Blank Spreadsheet")
                                     }
@@ -1400,17 +1418,17 @@ fun SpreadsheetScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                            Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
                                             Spacer(Modifier.width(12.dp))
                                             Text("Sheets", fontWeight = FontWeight.SemiBold)
                                         }
                                         Surface(
                                             shape = RoundedCornerShape(6.dp),
-                                            color = GreenPrimary.copy(alpha = 0.15f)
+                                            color = themeAccentColor.copy(alpha = 0.15f)
                                         ) {
                                             Text(
                                                 text = "${engine.sheets.size}",
-                                                color = GreenPrimary,
+                                                color = themeAccentColor,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1428,7 +1446,7 @@ fun SpreadsheetScreen(
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = GreenPrimary)
+                                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = themeAccentColor)
                                         Spacer(Modifier.width(12.dp))
                                         Text("Find & Replace", fontWeight = FontWeight.SemiBold)
                                     }
@@ -1451,11 +1469,11 @@ fun SpreadsheetScreen(
                                         Text("Zoom Controls", fontWeight = FontWeight.SemiBold)
                                         Surface(
                                             shape = RoundedCornerShape(6.dp),
-                                            color = GreenPrimary.copy(alpha = 0.15f)
+                                            color = themeAccentColor.copy(alpha = 0.15f)
                                         ) {
                                             Text(
                                                 text = "${(userZoom * 100).roundToInt()}%",
-                                                color = GreenPrimary,
+                                                color = themeAccentColor,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1468,7 +1486,7 @@ fun SpreadsheetScreen(
                                         Icons.Default.ZoomIn,
                                         contentDescription = null,
                                         modifier = Modifier.size(20.dp),
-                                        tint = GreenPrimary
+                                        tint = themeAccentColor
                                     )
                                 },
                                 onClick = {
@@ -1655,7 +1673,7 @@ fun SpreadsheetScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
-                                    color = GreenPrimary
+                                    color = themeAccentColor
                                 ) {
                                     Text(
                                         text = cellCoord,
@@ -1672,7 +1690,7 @@ fun SpreadsheetScreen(
                                             text = cellHeader,
                                             fontWeight = FontWeight.SemiBold,
                                             fontSize = 11.sp,
-                                            color = GreenPrimary,
+                                            color = themeAccentColor,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -1691,7 +1709,7 @@ fun SpreadsheetScreen(
                                     imageVector = Icons.Default.Edit,
                                     contentDescription = null,
                                     modifier = Modifier.size(14.dp),
-                                    tint = GreenPrimary.copy(alpha = 0.6f)
+                                    tint = themeAccentColor.copy(alpha = 0.6f)
                                 )
                             }
                         }
@@ -1702,16 +1720,28 @@ fun SpreadsheetScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             FilledTonalIconButton(
-                                onClick = { viewModel.copyCell(context, curRow, curCol) },
+                                onClick = {
+                                    if (selectedColumn != null) {
+                                        viewModel.copyColumn(context, selectedColumn!!)
+                                    } else {
+                                        viewModel.copyCell(context, curRow, curCol)
+                                    }
+                                },
                                 modifier = Modifier.size(38.dp).testTag("action_copy")
                             ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy Cell", modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(18.dp))
                             }
                             FilledTonalIconButton(
-                                onClick = { viewModel.pasteCell(context, curRow, curCol) },
+                                onClick = {
+                                    if (selectedColumn != null) {
+                                        viewModel.pasteColumn(context, selectedColumn!!, startRow = 0)
+                                    } else {
+                                        viewModel.pasteCell(context, curRow, curCol)
+                                    }
+                                },
                                 modifier = Modifier.size(38.dp).testTag("action_paste")
                             ) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = "Paste Cell", modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.ContentPaste, contentDescription = "Paste", modifier = Modifier.size(18.dp))
                             }
                             val deleteMode = settings.deleteMode
                             val deleteIcon = when (deleteMode) {
@@ -1807,8 +1837,8 @@ fun SpreadsheetScreen(
                             onClick = { moveSelection(deltaRow = 0, deltaCol = -1) },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                containerColor = Color(0xFF2A4D69),
+                                contentColor = Color(0xFFE2E8F0)
                             ),
                             modifier = Modifier.weight(1f).height(44.dp).testTag("nav_left")
                         ) {
@@ -1821,8 +1851,8 @@ fun SpreadsheetScreen(
                             onClick = { moveSelection(deltaRow = -1, deltaCol = 0) },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                containerColor = Color(0xFF1E3A5F),
+                                contentColor = Color(0xFFE2E8F0)
                             ),
                             modifier = Modifier.weight(1f).height(44.dp).testTag("nav_up")
                         ) {
@@ -1835,8 +1865,8 @@ fun SpreadsheetScreen(
                             onClick = { moveSelection(deltaRow = 1, deltaCol = 0) },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                containerColor = Color(0xFF1E3A5F),
+                                contentColor = Color(0xFFE2E8F0)
                             ),
                             modifier = Modifier.weight(1f).height(44.dp).testTag("nav_down")
                         ) {
@@ -1849,8 +1879,8 @@ fun SpreadsheetScreen(
                             onClick = { moveSelection(deltaRow = 0, deltaCol = 1) },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                containerColor = Color(0xFF2A4D69),
+                                contentColor = Color(0xFFE2E8F0)
                             ),
                             modifier = Modifier.weight(1f).height(44.dp).testTag("nav_right")
                         ) {
@@ -2108,18 +2138,21 @@ fun SpreadsheetScreen(
                                                 val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
                                                 if (isDoubleTap) {
                                                     lastTapTimestamp = 0L
+                                                    selectedColumn = c
                                                     selectedCell = Pair(0, c)
-                                                    showColumnMenu = c
+                                                    viewModel.speak("Column ${engine.getColumnName(c)} selected")
                                                     triggerHaptic()
                                                 } else {
                                                     lastTapTimestamp = now
                                                     lastTapPosition = startPos
+                                                    selectedColumn = null
                                                     selectedCell = Pair(0, c)
-                                                    viewModel.speakCell(0, c)
+                                                    viewModel.speakColumn(c)
                                                     triggerHaptic()
                                                 }
                                             } else if (screenX >= headerW && screenY > headerTouchH) {
                                                 // Cell grid tapped
+                                                selectedColumn = null
                                                 val gridX = (screenX - headerW - curPan.x) / userZoom
                                                 val gridY = (screenY - headerH - curPan.y) / userZoom
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
@@ -2139,6 +2172,7 @@ fun SpreadsheetScreen(
                                                 }
                                             } else if (screenX < headerW && screenY > headerH) {
                                                 // Tapped row header
+                                                selectedColumn = null
                                                 val gridY = (screenY - headerH - curPan.y) / userZoom
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                                 val currentC = selectedCell?.second ?: 0
@@ -2339,6 +2373,7 @@ fun SpreadsheetScreen(
                                     cellColorInt != null -> Color(cellColorInt)
                                     rowColorInt != null -> Color(rowColorInt)
                                     isHeaderRow && engine.headerBgColor != null -> Color(engine.headerBgColor!!)
+                                    isHeaderRow -> headerBg
                                     colColorInt != null -> Color(colColorInt)
                                     else -> null
                                 }
@@ -2351,8 +2386,8 @@ fun SpreadsheetScreen(
                                     )
                                 }
 
-                                // Cell Selection Highlight (Overlay stays visible on top)
-                                if (isSelected) {
+                                // Cell / Column Selection Highlight (Overlay stays visible on top)
+                                if (isSelected || selectedColumn == c) {
                                     drawRect(
                                         color = highlightFill,
                                         topLeft = Offset(colLeft, rowTop),
@@ -2495,7 +2530,8 @@ fun SpreadsheetScreen(
                         val colLetter = engine.getColumnName(hc)
                         val displayLabel = colLetter
 
-                        val isColSelected = selectedCell?.second == hc
+                        val isColSelected = selectedCell?.second == hc || selectedColumn == hc
+                        val isColFullySelected = selectedColumn == hc
                         val headerTextColorInt = engine.headerTextColor
                         val baseHeaderStyle = if (isColSelected) headerStyleSelected else headerStyleNormal
                         val effectiveHeaderStyle = if (headerTextColorInt != null) {
@@ -2504,18 +2540,31 @@ fun SpreadsheetScreen(
                             baseHeaderStyle
                         }
 
-                        val colColorInt = engine.getColumnColor(hc)
-                        if (colColorInt != null) {
+                        if (isColFullySelected) {
                             drawRect(
-                                color = Color(colColorInt).copy(alpha = 0.35f),
+                                color = selectedCellColor.copy(alpha = 0.35f),
                                 topLeft = Offset(colLeft, 0f),
                                 size = Size(colWidth, headerH)
                             )
                             drawRect(
-                                color = Color(colColorInt),
+                                color = selectedCellColor,
                                 topLeft = Offset(colLeft, headerH - 3.5f * density),
                                 size = Size(colWidth, 3.5f * density)
                             )
+                        } else {
+                            val colColorInt = engine.getColumnColor(hc)
+                            if (colColorInt != null) {
+                                drawRect(
+                                    color = Color(colColorInt).copy(alpha = 0.35f),
+                                    topLeft = Offset(colLeft, 0f),
+                                    size = Size(colWidth, headerH)
+                                )
+                                drawRect(
+                                    color = Color(colColorInt),
+                                    topLeft = Offset(colLeft, headerH - 3.5f * density),
+                                    size = Size(colWidth, 3.5f * density)
+                                )
+                            }
                         }
 
                         drawRect(
@@ -2587,7 +2636,7 @@ fun SpreadsheetScreen(
 
                             val rowName = "${hr + 1}"
                             val isRowSelected = selectedCell?.first == hr
-                            val headerColor = if (isRowSelected) GreenPrimary else headerStyle.color
+                            val headerColor = if (isRowSelected) themeAccentColor else headerStyle.color
 
                             val rowColorInt = engine.getRowColor(hr)
                             if (rowColorInt != null) {
@@ -2740,8 +2789,8 @@ fun SpreadsheetScreen(
                             .heightIn(min = 90.dp)
                             .testTag("cell_edit_textfield"),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = GreenPrimary,
-                            focusedLabelColor = GreenPrimary
+                            focusedBorderColor = themeAccentColor,
+                            focusedLabelColor = themeAccentColor
                         )
                     )
 
@@ -2772,7 +2821,7 @@ fun SpreadsheetScreen(
                                 Icon(
                                     Icons.Default.Functions,
                                     contentDescription = null,
-                                    tint = GreenPrimary,
+                                    tint = themeAccentColor,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -2826,12 +2875,12 @@ fun SpreadsheetScreen(
                                             )
                                         },
                                         colors = SuggestionChipDefaults.suggestionChipColors(
-                                            containerColor = GreenPrimary.copy(alpha = 0.12f),
-                                            labelColor = GreenPrimary
+                                            containerColor = themeAccentColor.copy(alpha = 0.12f),
+                                            labelColor = themeAccentColor
                                         ),
                                         border = SuggestionChipDefaults.suggestionChipBorder(
                                             enabled = true,
-                                            borderColor = GreenPrimary.copy(alpha = 0.4f)
+                                            borderColor = themeAccentColor.copy(alpha = 0.4f)
                                         ),
                                         modifier = Modifier
                                             .testTag("chip_formula_${fItem.name.lowercase()}")
@@ -2858,7 +2907,7 @@ fun SpreadsheetScreen(
                         viewModel.updateCell(r, c, textFieldValue.text)
                         editingCell = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("save_cell_button")
                 ) {
                     Text("Save")
@@ -2905,7 +2954,7 @@ fun SpreadsheetScreen(
             onDismissRequest = { showSaveConfirmDialog = false },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Save, contentDescription = null, tint = GreenPrimary)
+                    Icon(Icons.Default.Save, contentDescription = null, tint = themeAccentColor)
                     Spacer(Modifier.width(8.dp))
                     Text("Save Document to Device")
                 }
@@ -2936,7 +2985,7 @@ fun SpreadsheetScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("confirm_save_yes_button")
                 ) {
                     Text("Save to Downloads")
@@ -2976,7 +3025,7 @@ fun SpreadsheetScreen(
                         clearColConfirm = null
                         viewModel.clearColumn(col)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("confirm_clear_column")
                 ) { Text("Clear") }
             },
@@ -2998,7 +3047,7 @@ fun SpreadsheetScreen(
                         clearRowConfirm = null
                         viewModel.clearRow(row)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("confirm_clear_row")
                 ) { Text("Clear") }
             },
@@ -3020,7 +3069,7 @@ fun SpreadsheetScreen(
                         deleteRowConfirm = null
                         viewModel.deleteRow(row)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("confirm_delete_row")
                 ) { Text("Delete") }
             },
@@ -3050,7 +3099,7 @@ fun SpreadsheetScreen(
                                     viewModel.updateDeleteMode(mode)
                                 }
                                 .padding(16.dp),
-                            color = GreenPrimary,
+                            color = themeAccentColor,
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -3094,7 +3143,7 @@ fun SpreadsheetScreen(
                     
                     LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                         item {
-                            Text("Downloaded (works offline)", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+                            Text("Downloaded (works offline)", fontWeight = FontWeight.Bold, color = themeAccentColor, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
                         }
                         items(filtered.take(3)) { (code, name) ->
                             Text(
@@ -3111,7 +3160,7 @@ fun SpreadsheetScreen(
                         }
                         item {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            Text("Online", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+                            Text("Online", fontWeight = FontWeight.Bold, color = themeAccentColor, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
                         }
                         items(filtered.drop(3)) { (code, name) ->
                             Text(
@@ -3156,7 +3205,7 @@ fun SpreadsheetScreen(
                         }
                         showRenameDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("confirm_rename_button")
                 ) {
                     Text("Rename")
@@ -3177,7 +3226,7 @@ fun SpreadsheetScreen(
                 Icon(
                     imageVector = Icons.Default.ZoomIn,
                     contentDescription = null,
-                    tint = GreenPrimary,
+                    tint = themeAccentColor,
                     modifier = Modifier.size(32.dp)
                 )
             },
@@ -3199,11 +3248,11 @@ fun SpreadsheetScreen(
                     // Large Current Zoom Display
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = GreenPrimary.copy(alpha = 0.12f)
+                        color = themeAccentColor.copy(alpha = 0.12f)
                     ) {
                         Text(
                             text = "${(userZoom * 100).roundToInt()}%",
-                            color = GreenPrimary,
+                            color = themeAccentColor,
                             fontWeight = FontWeight.Bold,
                             fontSize = 26.sp,
                             modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
@@ -3234,8 +3283,8 @@ fun SpreadsheetScreen(
                                 .padding(horizontal = 8.dp)
                                 .testTag("zoom_slider"),
                             colors = SliderDefaults.colors(
-                                thumbColor = GreenPrimary,
-                                activeTrackColor = GreenPrimary
+                                thumbColor = themeAccentColor,
+                                activeTrackColor = themeAccentColor
                             )
                         )
 
@@ -3265,7 +3314,7 @@ fun SpreadsheetScreen(
                                 val isCurrent = (userZoom * 100).roundToInt() == (preset * 100).roundToInt()
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = if (isCurrent) GreenPrimary else MaterialTheme.colorScheme.surfaceVariant,
+                                    color = if (isCurrent) themeAccentColor else MaterialTheme.colorScheme.surfaceVariant,
                                     modifier = Modifier
                                         .weight(1f)
                                         .clickable { applyZoom(preset) }
@@ -3323,7 +3372,7 @@ fun SpreadsheetScreen(
             confirmButton = {
                 Button(
                     onClick = { showZoomControlsMenu = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("dialog_zoom_done_button")
                 ) {
                     Text("Done")
@@ -3340,7 +3389,7 @@ fun SpreadsheetScreen(
                 Icon(
                     imageVector = Icons.Default.Layers,
                     contentDescription = null,
-                    tint = GreenPrimary,
+                    tint = themeAccentColor,
                     modifier = Modifier.size(32.dp)
                 )
             },
@@ -3358,7 +3407,7 @@ fun SpreadsheetScreen(
                         },
                         modifier = Modifier.testTag("dialog_add_sheet_button")
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add sheet", tint = GreenPrimary)
+                        Icon(Icons.Default.Add, contentDescription = "Add sheet", tint = themeAccentColor)
                     }
                 }
             },
@@ -3400,7 +3449,7 @@ fun SpreadsheetScreen(
                                     .testTag("sheet_item_$idx"),
                                 shape = RoundedCornerShape(10.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isActive) GreenPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    containerColor = if (isActive) themeAccentColor.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                 )
                             ) {
                                 Row(
@@ -3414,20 +3463,20 @@ fun SpreadsheetScreen(
                                         Icon(
                                             Icons.Default.Layers,
                                             contentDescription = null,
-                                            tint = if (isActive) GreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            tint = if (isActive) themeAccentColor else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(20.dp)
                                         )
                                         Spacer(Modifier.width(12.dp))
                                         Text(
                                             text = sheet.name,
                                             fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isActive) GreenPrimary else MaterialTheme.colorScheme.onSurface
+                                            color = if (isActive) themeAccentColor else MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                     if (isActive) {
                                         Surface(
                                             shape = RoundedCornerShape(6.dp),
-                                            color = GreenPrimary
+                                            color = themeAccentColor
                                         ) {
                                             Text(
                                                 text = "Active",
@@ -3461,7 +3510,7 @@ fun SpreadsheetScreen(
             confirmButton = {
                 Button(
                     onClick = { showSheetsDialog = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("dialog_sheets_done_button")
                 ) {
                     Text("Close")
@@ -3492,7 +3541,7 @@ fun SpreadsheetScreen(
                         }
                         showAddSheetDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("confirm_add_sheet_button")
                 ) {
                     Text("Add")
@@ -3528,7 +3577,7 @@ fun SpreadsheetScreen(
                         }
                         sheetToRename = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                     modifier = Modifier.testTag("confirm_rename_sheet_button")
                 ) {
                     Text("Rename")
@@ -3592,7 +3641,7 @@ fun SpreadsheetScreen(
                 Icon(
                     imageVector = Icons.Default.FilterList,
                     contentDescription = null,
-                    tint = GreenPrimary,
+                    tint = themeAccentColor,
                     modifier = Modifier.size(32.dp)
                 )
             },
@@ -3654,7 +3703,7 @@ fun SpreadsheetScreen(
                                             filterSelectedValues - valStr
                                         }
                                     },
-                                    colors = CheckboxDefaults.colors(checkedColor = GreenPrimary)
+                                    colors = CheckboxDefaults.colors(checkedColor = themeAccentColor)
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(valStr, fontSize = 14.sp)
@@ -3681,7 +3730,7 @@ fun SpreadsheetScreen(
                             viewModel.ttsManager.speak("Showing $visible of $total rows.")
                             filterColIndex = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                        colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
                         modifier = Modifier.testTag("filter_apply_button")
                     ) {
                         Text("Apply")
@@ -3707,6 +3756,7 @@ fun SpreadsheetScreen(
             viewModel = viewModel,
             settings = settings,
             coroutineScope = coroutineScope,
+            selectedColumn = selectedColumn,
             onEditCell = { cellPair, initialFormula ->
                 editingCell = cellPair
                 if (initialFormula != null) {
@@ -3782,7 +3832,7 @@ fun UnifiedColorPickerDialog(
     onSetTextColor: (Int?) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var activeTab by remember { mutableStateOf(state.initialTab) }
+    var activeTab by remember(state) { mutableStateOf(state.initialTab) }
 
     val currentBgColor = when (val target = state.target) {
         is ColorTarget.Cell -> engine.getCellColor(target.r, target.c)
@@ -3798,21 +3848,32 @@ fun UnifiedColorPickerDialog(
         is ColorTarget.Header -> engine.headerTextColor
     }
 
-    var workingBgColor by remember { mutableStateOf(currentBgColor ?: 0xFFFFFFFF.toInt()) }
-    var workingTextColor by remember { mutableStateOf(currentTextColor ?: 0xFF000000.toInt()) }
-    var brightnessMultiplier by remember { mutableFloatStateOf(1.0f) }
+    var workingBgColor by remember(state.target) { mutableStateOf(currentBgColor) }
+    var workingTextColor by remember(state.target) { mutableStateOf(currentTextColor) }
 
-    val activeColor = if (activeTab == ColorPickerTab.BACKGROUND) workingBgColor else workingTextColor
+    val currentWorkingColor = if (activeTab == ColorPickerTab.BACKGROUND) workingBgColor else workingTextColor
+    val defaultColor = if (activeTab == ColorPickerTab.BACKGROUND) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+    val effectiveColorInt = currentWorkingColor ?: defaultColor
 
-    var baseRed by remember(activeTab, activeColor) { mutableFloatStateOf(((activeColor shr 16) and 0xFF).toFloat()) }
-    var baseGreen by remember(activeTab, activeColor) { mutableFloatStateOf(((activeColor shr 8) and 0xFF).toFloat()) }
-    var baseBlue by remember(activeTab, activeColor) { mutableFloatStateOf((activeColor and 0xFF).toFloat()) }
+    val hsv = remember(activeTab, currentWorkingColor) {
+        val arr = FloatArray(3)
+        android.graphics.Color.colorToHSV(effectiveColorInt, arr)
+        arr
+    }
+    var hue by remember(activeTab, currentWorkingColor) { mutableFloatStateOf(hsv[0]) }
+    var saturation by remember(activeTab, currentWorkingColor) { mutableFloatStateOf(hsv[1]) }
+    var value by remember(activeTab, currentWorkingColor) { mutableFloatStateOf(hsv[2]) }
 
-    val finalColorInt = remember(baseRed, baseGreen, baseBlue, brightnessMultiplier) {
-        val r = (baseRed * brightnessMultiplier).roundToInt().coerceIn(0, 255)
-        val g = (baseGreen * brightnessMultiplier).roundToInt().coerceIn(0, 255)
-        val b = (baseBlue * brightnessMultiplier).roundToInt().coerceIn(0, 255)
-        (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    fun updateFromHsv(newHue: Float, newSat: Float, newVal: Float) {
+        hue = newHue
+        saturation = newSat
+        value = newVal
+        val newColor = android.graphics.Color.HSVToColor(floatArrayOf(newHue, newSat, newVal)) or (0xFF shl 24)
+        if (activeTab == ColorPickerTab.BACKGROUND) {
+            workingBgColor = newColor
+        } else {
+            workingTextColor = newColor
+        }
     }
 
     val titleTarget = when (val target = state.target) {
@@ -3821,6 +3882,8 @@ fun UnifiedColorPickerDialog(
         is ColorTarget.Row -> "Row ${target.r + 1}"
         is ColorTarget.Header -> "Header Row"
     }
+
+    val themeColor = MaterialTheme.colorScheme.primary
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3842,13 +3905,12 @@ fun UnifiedColorPickerDialog(
                 TabRow(
                     selectedTabIndex = if (activeTab == ColorPickerTab.BACKGROUND) 0 else 1,
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = GreenPrimary
+                    contentColor = themeColor
                 ) {
                     Tab(
                         selected = activeTab == ColorPickerTab.BACKGROUND,
                         onClick = {
                             activeTab = ColorPickerTab.BACKGROUND
-                            brightnessMultiplier = 1.0f
                         },
                         text = { Text("Background", fontWeight = FontWeight.Bold) },
                         modifier = Modifier.testTag("tab_background_color")
@@ -3857,7 +3919,6 @@ fun UnifiedColorPickerDialog(
                         selected = activeTab == ColorPickerTab.TEXT,
                         onClick = {
                             activeTab = ColorPickerTab.TEXT
-                            brightnessMultiplier = 1.0f
                         },
                         text = { Text("Text Color", fontWeight = FontWeight.Bold) },
                         modifier = Modifier.testTag("tab_text_color")
@@ -3874,7 +3935,7 @@ fun UnifiedColorPickerDialog(
                         modifier = Modifier
                             .size(56.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(finalColorInt))
+                            .background(Color(effectiveColorInt))
                             .border(2.dp, Color.Black.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
                             .testTag("color_preview_box")
                     )
@@ -3885,7 +3946,7 @@ fun UnifiedColorPickerDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = String.format("#%06X", finalColorInt and 0xFFFFFF),
+                            text = if (currentWorkingColor != null) String.format("#%06X", effectiveColorInt and 0xFFFFFF) else "(Default)",
                             style = MaterialTheme.typography.titleMedium,
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
@@ -3917,16 +3978,16 @@ fun UnifiedColorPickerDialog(
                                 .background(swatchColor)
                                 .border(1.dp, Color.Black.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
                                 .clickable {
-                                    baseRed = ((swatch.colorInt shr 16) and 0xFF).toFloat()
-                                    baseGreen = ((swatch.colorInt shr 8) and 0xFF).toFloat()
-                                    baseBlue = (swatch.colorInt and 0xFF).toFloat()
-                                    brightnessMultiplier = 1.0f
+                                    val newColor = swatch.colorInt
+                                    val tempHsv = FloatArray(3)
+                                    android.graphics.Color.colorToHSV(newColor, tempHsv)
+                                    hue = tempHsv[0]
+                                    saturation = tempHsv[1]
+                                    value = tempHsv[2]
                                     if (activeTab == ColorPickerTab.BACKGROUND) {
-                                        workingBgColor = swatch.colorInt
-                                        onSetBgColor(swatch.colorInt)
+                                        workingBgColor = newColor
                                     } else {
-                                        workingTextColor = swatch.colorInt
-                                        onSetTextColor(swatch.colorInt)
+                                        workingTextColor = newColor
                                     }
                                 }
                                 .testTag("swatch_${swatch.name.lowercase().replace(" ", "_")}"),
@@ -3944,43 +4005,24 @@ fun UnifiedColorPickerDialog(
                     fontWeight = FontWeight.SemiBold
                 )
 
-                // Canvas color picker for Hue & Saturation
-                val hsv = FloatArray(3)
-                android.graphics.Color.colorToHSV(finalColorInt, hsv)
-                var hue by remember(activeTab) { mutableFloatStateOf(hsv[0]) }
-                var saturation by remember(activeTab) { mutableFloatStateOf(hsv[1]) }
-                var value by remember(activeTab) { mutableFloatStateOf(hsv[2]) }
-
-                val canvasColorInt = remember(hue, saturation, value) {
-                    android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value)) or (0xFF shl 24)
-                }
-
-                LaunchedEffect(canvasColorInt) {
-                    if (activeTab == ColorPickerTab.BACKGROUND) {
-                        workingBgColor = canvasColorInt
-                        onSetBgColor(canvasColorInt)
-                    } else {
-                        workingTextColor = canvasColorInt
-                        onSetTextColor(canvasColorInt)
-                    }
-                }
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(160.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .pointerInput(Unit) {
+                        .pointerInput(activeTab) {
                             detectTapGestures { offset ->
-                                hue = (offset.x / size.width).coerceIn(0f, 1f) * 360f
-                                saturation = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
+                                val newHue = (offset.x / size.width).coerceIn(0f, 1f) * 360f
+                                val newSat = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
+                                updateFromHsv(newHue, newSat, value)
                             }
                         }
-                        .pointerInput(Unit) {
+                        .pointerInput(activeTab) {
                             detectDragGestures { change, _ ->
                                 val offset = change.position
-                                hue = (offset.x / size.width).coerceIn(0f, 1f) * 360f
-                                saturation = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
+                                val newHue = (offset.x / size.width).coerceIn(0f, 1f) * 360f
+                                val newSat = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
+                                updateFromHsv(newHue, newSat, value)
                             }
                         }
                 ) {
@@ -4036,14 +4078,14 @@ fun UnifiedColorPickerDialog(
                         .padding(12.dp)
                 ) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Brightness (Value)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
+                        Text("Brightness (Value)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = themeColor)
                         Text("${(value * 100).roundToInt()}%", fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontWeight = FontWeight.Bold)
                     }
                     Slider(
                         value = value,
-                        onValueChange = { value = it },
+                        onValueChange = { updateFromHsv(hue, saturation, it) },
                         valueRange = 0f..1f,
-                        colors = SliderDefaults.colors(thumbColor = GreenPrimary, activeTrackColor = GreenPrimary),
+                        colors = SliderDefaults.colors(thumbColor = themeColor, activeTrackColor = themeColor),
                         modifier = Modifier.testTag("graphical_brightness_slider")
                     )
                 }
@@ -4051,10 +4093,16 @@ fun UnifiedColorPickerDialog(
                 // Reset / Clear Button
                 OutlinedButton(
                     onClick = {
+                        val defaultC = if (activeTab == ColorPickerTab.BACKGROUND) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+                        val tempHsv = FloatArray(3)
+                        android.graphics.Color.colorToHSV(defaultC, tempHsv)
+                        hue = tempHsv[0]
+                        saturation = tempHsv[1]
+                        value = tempHsv[2]
                         if (activeTab == ColorPickerTab.BACKGROUND) {
-                            onSetBgColor(null)
+                            workingBgColor = null
                         } else {
-                            onSetTextColor(null)
+                            workingTextColor = null
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(40.dp)
@@ -4067,11 +4115,27 @@ fun UnifiedColorPickerDialog(
         },
         confirmButton = {
             Button(
-                onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                onClick = {
+                    if (workingBgColor != currentBgColor) {
+                        onSetBgColor(workingBgColor)
+                    }
+                    if (workingTextColor != currentTextColor) {
+                        onSetTextColor(workingTextColor)
+                    }
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                 modifier = Modifier.testTag("dialog_color_done_button")
             ) {
                 Text("Done")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("dialog_color_cancel_button")
+            ) {
+                Text("Cancel")
             }
         }
     )

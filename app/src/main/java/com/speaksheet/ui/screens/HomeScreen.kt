@@ -38,7 +38,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.speaksheet.data.RecentFile
-import com.speaksheet.ui.theme.GreenPrimary
 import com.speaksheet.viewmodel.MainViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,6 +51,8 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit
 ) {
     val recentFiles by viewModel.recentFiles.collectAsStateWithLifecycle()
+    val settings by viewModel.appSettings.collectAsStateWithLifecycle()
+    val themeColor = Color(settings.themeColor)
     var searchQuery by remember { mutableStateOf("") }
     val filteredFiles = remember(recentFiles, searchQuery) {
         recentFiles.filter { 
@@ -104,7 +105,7 @@ fun HomeScreen(
                         Icon(
                             Icons.Filled.TableChart, 
                             contentDescription = null, 
-                            tint = GreenPrimary,
+                            tint = themeColor,
                             modifier = Modifier.size(28.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -118,7 +119,7 @@ fun HomeScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = GreenPrimary
+                    titleContentColor = themeColor
                 )
             )
         },
@@ -134,7 +135,7 @@ fun HomeScreen(
                 text = {
                     Text("New Sheet", fontWeight = FontWeight.SemiBold)
                 },
-                containerColor = GreenPrimary,
+                containerColor = themeColor,
                 contentColor = Color.White,
                 modifier = Modifier
                     .padding(16.dp)
@@ -160,8 +161,8 @@ fun HomeScreen(
                         .testTag("search_files_input"),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = GreenPrimary,
-                        focusedLabelColor = GreenPrimary
+                        focusedBorderColor = themeColor,
+                        focusedLabelColor = themeColor
                     )
                 )
             }
@@ -199,11 +200,11 @@ fun HomeScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = GreenPrimary.copy(alpha = 0.2f),
+                                    color = themeColor.copy(alpha = 0.2f),
                                     modifier = Modifier.size(36.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.Add, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(20.dp))
+                                        Icon(Icons.Default.Add, contentDescription = null, tint = themeColor, modifier = Modifier.size(20.dp))
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -232,11 +233,11 @@ fun HomeScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFF1B5E20).copy(alpha = 0.2f),
+                                    color = themeColor.copy(alpha = 0.2f),
                                     modifier = Modifier.size(36.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.TableChart, contentDescription = null, tint = Color(0xFF1B5E20), modifier = Modifier.size(20.dp))
+                                        Icon(Icons.Default.TableChart, contentDescription = null, tint = themeColor, modifier = Modifier.size(20.dp))
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -293,7 +294,7 @@ fun HomeScreen(
                                 viewModel.openNewSpreadsheet()
                                 onNavigateToSpreadsheet()
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                            colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                             modifier = Modifier.testTag("new_sheet_header_button")
                         ) {
@@ -336,7 +337,7 @@ fun HomeScreen(
                                     viewModel.openNewSpreadsheet()
                                     onNavigateToSpreadsheet()
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                                 modifier = Modifier.testTag("empty_state_create_new_button")
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -350,6 +351,7 @@ fun HomeScreen(
                 items(filteredFiles, key = { it.uri }) { file ->
                     RecentFileCard(
                         file = file,
+                        themeColor = themeColor,
                         onClick = {
                             viewModel.openFile(Uri.parse(file.uri), file.name)
                             onNavigateToSpreadsheet()
@@ -369,6 +371,7 @@ private val recentFileDateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale
 @Composable
 fun RecentFileCard(
     file: RecentFile, 
+    themeColor: Color,
     onClick: () -> Unit,
     onDelete: (() -> Unit)? = null
 ) {
@@ -396,14 +399,14 @@ fun RecentFileCard(
         ) {
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                color = themeColor.copy(alpha = 0.15f),
                 modifier = Modifier.size(44.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Filled.TableChart,
                         contentDescription = null,
-                        tint = GreenPrimary,
+                        tint = themeColor,
                         modifier = Modifier.size(24.dp)
                     )
                 }

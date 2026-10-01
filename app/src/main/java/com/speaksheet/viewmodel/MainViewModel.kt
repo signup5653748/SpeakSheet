@@ -848,14 +848,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun speakColumn(col: Int) {
-        val colHeader = spreadsheetEngine.getColumnHeaderName(col)
         val colLetter = spreadsheetEngine.getColumnName(col)
-        var count = 0
-        for (r in 1 until spreadsheetEngine.maxRow) {
-            if (spreadsheetEngine.getCellValue(r, col).isNotEmpty()) count++
+        val colHeader = spreadsheetEngine.getColumnHeaderName(col, 0)
+        val values = mutableListOf<String>()
+        var totalNonEmpty = 0
+        val limit = 50
+        for (r in 0 until spreadsheetEngine.maxRow) {
+            val v = spreadsheetEngine.getCellValue(r, col).trim()
+            if (v.isNotEmpty()) {
+                totalNonEmpty++
+                if (values.size < limit) {
+                    values.add(v)
+                }
+            }
         }
-        val wrapState = if (spreadsheetEngine.isWrapEnabled(col)) "Text wrap enabled." else "Text wrap disabled."
-        ttsManager.speak("Column $colLetter $colHeader. $count items. $wrapState")
+        val headerPrefix = if (colHeader.isNotEmpty() && !colHeader.equals("Column $colLetter", ignoreCase = true)) {
+            "Column $colLetter, $colHeader"
+        } else {
+            "Column $colLetter"
+        }
+        val speechText = if (values.isEmpty()) {
+            "$headerPrefix. Empty column."
+        } else {
+            val moreText = if (totalNonEmpty > limit) ", and ${totalNonEmpty - limit} more" else ""
+            "$headerPrefix. Values: ${values.joinToString(", ")}$moreText."
+        }
+        ttsManager.speak(speechText)
     }
 
     fun speakRow(row: Int) {
@@ -901,11 +919,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var copiedCellBgColor: Int? = null
     private var copiedCellTextColor: Int? = null
+    private var copiedColumnValues: List<String>? = null
+    private var copiedColumnColors: Map<Int, Int>? = null
+    private var copiedColumnTextColors: Map<Int, Int>? = null
 
     fun copyCell(context: android.content.Context, row: Int, col: Int) {
         val value = spreadsheetEngine.getCellFormulaOrValue(row, col)
         copiedCellBgColor = spreadsheetEngine.getCellColor(row, col)
         copiedCellTextColor = spreadsheetEngine.getCellTextColor(row, col)
+        copiedColumnValues = null
+        copiedColumnColors = null
+        copiedColumnTextColors = null
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
@@ -918,12 +942,97 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun copyColumn(context: android.content.Context, col: Int) {
+        val colLetter = spreadsheetEngine.getColumnName(col)
+        val colHeader = spreadsheetEngine.getColumnHeaderName(col, 0)
+        val values = (0 until spreadsheetEngine.maxRow).map { r ->
+            spreadsheetEngine.getCellFormulaOrValue(r, col)
+        }
+        val lastNonEmpty = values.indexOfLast { it.isNotEmpty() }
+        val trimmedValues = if (lastNonEmpty >= 0) values.subList(0, lastNonEmpty + 1) else emptyList()
+        val clipText = trimmedValues.joinToString("\n")
+        
+        copiedColumnValues = trimmedValues
+        val colColors = mutableMapOf<Int, Int>()
+        val colTextColors = mutableMapOf<Int, Int>()
+        for (r in 0 until spreadsheetEngine.maxRow) {
+            spreadsheetEngine.getCellColor(r, col)?.let { colColors[r] = it }
+            spreadsheetEngine.getCellTextColor(r, col)?.let { colTextColors[r] = it }
+        }
+        copiedColumnColors = colColors
+        copiedColumnTextColors = colTextColors
+        copiedCellBgColor = null
+        copiedCellTextColor = null
+
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val clip = android.content.ClipData.newPlainText("Column Content", clipText)
+        clipboard?.setPrimaryClip(clip)
+
+        val headerName = if (colHeader.isNotEmpty() && !colHeader.equals("Column $colLetter", ignoreCase = true)) {
+            "Column $colLetter, $colHeader"
+        } else {
+            "Column $colLetter"
+        }
+        ttsManager.speak("Copied entire $headerName, ${trimmedValues.size} rows")
+    }
+
+    fun pasteColumn(context: android.content.Context, targetCol: Int, startRow: Int = 0) {
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val item = clipboard?.primaryClip?.getItemAt(0)
+        val text = item?.text?.toString() ?: ""
+        val colLetter = spreadsheetEngine.getColumnName(targetCol)
+        val colHeader = spreadsheetEngine.getColumnHeaderName(targetCol, 0)
+        val headerName = if (colHeader.isNotEmpty() && !colHeader.equals("Column $colLetter", ignoreCase = true)) {
+            "Column $colLetter, $colHeader"
+        } else {
+            "Column $colLetter"
+        }
+
+        if (text.isNotEmpty()) {
+            val lines = text.split("\n")
+            spreadsheetEngine.pushUndo("Paste Column into $headerName")
+            for (i in lines.indices) {
+                val targetR = startRow + i
+                if (targetR < spreadsheetEngine.maxRow) {
+                    spreadsheetEngine.setCell(targetR, targetCol, lines[i])
+                    copiedColumnColors?.get(i)?.let { spreadsheetEngine.setCellColor(targetR, targetCol, it) }
+                    copiedColumnTextColors?.get(i)?.let { spreadsheetEngine.setCellTextColor(targetR, targetCol, it) }
+                }
+            }
+            updateUndoRedoState()
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Pasted ${lines.size} values into $headerName")
+        } else {
+            ttsManager.speak("Clipboard is empty")
+        }
+    }
+
     fun pasteCell(context: android.content.Context, row: Int, col: Int) {
         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
         val item = clipboard?.primaryClip?.getItemAt(0)
         val text = item?.text?.toString() ?: ""
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
+
+        if (text.contains("\n")) {
+            val lines = text.split("\n")
+            spreadsheetEngine.pushUndo("Paste Column into $cellName")
+            for (i in lines.indices) {
+                val targetR = row + i
+                if (targetR < spreadsheetEngine.maxRow) {
+                    spreadsheetEngine.setCell(targetR, col, lines[i])
+                    copiedColumnColors?.get(i)?.let { spreadsheetEngine.setCellColor(targetR, col, it) }
+                    copiedColumnTextColors?.get(i)?.let { spreadsheetEngine.setCellTextColor(targetR, col, it) }
+                }
+            }
+            updateUndoRedoState()
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Pasted ${lines.size} rows starting at $cellName")
+            return
+        }
+
         if (text.isNotEmpty() || copiedCellBgColor != null || copiedCellTextColor != null) {
             spreadsheetEngine.pushUndo("Paste into $cellName")
             if (text.isNotEmpty()) {
