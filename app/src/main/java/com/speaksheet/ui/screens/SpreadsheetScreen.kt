@@ -776,11 +776,20 @@ fun ActionMenuSheet(
     val cellCoord = "${engine.getColumnName(c)}${r + 1}"
     var showCustomizeDialog by remember { mutableStateOf(false) }
     var focusedActionId by remember { mutableStateOf<String?>(null) }
+    var longPressActionItem by remember { mutableStateOf<MenuItemData?>(null) }
+    var isArrangeMode by remember { mutableStateOf(false) }
+    var arrangedQuickIds by remember { mutableStateOf(settings.quickActionIds) }
     val themeAccentColor = Color(settings.themeColor)
     val selectedCellColor = Color(settings.selectedCellColor)
 
     LaunchedEffect(pagerState.currentPage) {
         focusedActionId = null
+    }
+
+    LaunchedEffect(settings.quickActionIds) {
+        if (!isArrangeMode) {
+            arrangedQuickIds = settings.quickActionIds
+        }
     }
 
     ModalBottomSheet(
@@ -840,50 +849,6 @@ fun ActionMenuSheet(
                 modifier = Modifier.padding(vertical = 4.dp)
             )
 
-            ScrollableTabRow(
-                selectedTabIndex = pagerState.currentPage,
-                edgePadding = 8.dp,
-                containerColor = Color.Transparent,
-                contentColor = themeAccentColor,
-                divider = {},
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-            ) {
-                ACTION_MENU_TABS.forEachIndexed { index, tabName ->
-                    val isSelected = pagerState.currentPage == index
-                    Tab(
-                        selected = isSelected,
-                        onClick = {
-                            if (pagerState.currentPage != index) {
-                                coroutineScope.launch {
-                                    pagerState.animateScrollToPage(index)
-                                }
-                                viewModel.ttsManager.speak("$tabName tab selected")
-                                viewModel.updateSettings(settings.copy(lastActionMenuTab = index))
-                            }
-                        },
-                        text = {
-                            Text(
-                                text = tabName,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 12.sp,
-                                color = if (isSelected) themeAccentColor else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        modifier = Modifier
-                            .semantics {
-                                role = androidx.compose.ui.semantics.Role.Tab
-                                selected = isSelected
-                                contentDescription = "$tabName tab, ${index + 1} of ${ACTION_MENU_TABS.size}, ${if (isSelected) "selected" else "not selected"}"
-                            }
-                            .testTag("tab_${tabName.lowercase().replace(" ", "_").replace("&", "and")}")
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier
@@ -891,71 +856,193 @@ fun ActionMenuSheet(
                     .height(180.dp)
             ) { page ->
                 if (page == TAB_INDEX_QUICK_ACTIONS) {
-                    val quickActions = getActionsForTab(TAB_INDEX_QUICK_ACTIONS, r, c, engine, settings)
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 12.dp)
-                    ) {
-                        if (quickActions.isEmpty()) {
-                            Box(
+                    if (isArrangeMode) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Arrange Quick Actions", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Button(
+                                    onClick = {
+                                        viewModel.updateQuickActions(arrangedQuickIds)
+                                        isArrangeMode = false
+                                        viewModel.ttsManager.speak("Quick actions order saved")
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
+                                    modifier = Modifier.height(32.dp).testTag("button_done_arrange")
+                                ) {
+                                    Text("Done", fontSize = 12.sp)
+                                }
+                            }
+
+                            LazyColumn(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxWidth(),
-                                contentAlignment = Alignment.Center
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(
-                                        "No Quick Actions added yet.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(Modifier.height(8.dp))
-                                    Button(
-                                        onClick = { showCustomizeDialog = true },
-                                        colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
-                                        modifier = Modifier.testTag("button_add_quick_action_empty")
+                                items(arrangedQuickIds.size) { index ->
+                                    val actionId = arrangedQuickIds[index]
+                                    val allMap = getAllActionsMap(r, c, engine, settings)
+                                    val action = allMap[actionId] ?: MenuItemData(actionId, Icons.Default.Star, actionId)
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        tonalElevation = 2.dp,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(44.dp)
+                                            .testTag("arrange_item_$actionId")
                                     ) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Add Quick Actions")
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                Icon(Icons.Default.Star, contentDescription = "Drag Handle", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                                                Spacer(Modifier.width(8.dp))
+                                                Icon(action.icon, contentDescription = null, tint = themeAccentColor, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(action.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(
+                                                    onClick = {
+                                                        if (index > 0) {
+                                                            val list = arrangedQuickIds.toMutableList()
+                                                            val item = list.removeAt(index)
+                                                            list.add(index - 1, item)
+                                                            arrangedQuickIds = list
+                                                        }
+                                                    },
+                                                    enabled = index > 0,
+                                                    modifier = Modifier.size(28.dp).testTag("move_up_$actionId")
+                                                ) {
+                                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move Up", modifier = Modifier.size(16.dp))
+                                                }
+                                                IconButton(
+                                                    onClick = {
+                                                        if (index < arrangedQuickIds.size - 1) {
+                                                            val list = arrangedQuickIds.toMutableList()
+                                                            val item = list.removeAt(index)
+                                                            list.add(index + 1, item)
+                                                            arrangedQuickIds = list
+                                                        }
+                                                    },
+                                                    enabled = index < arrangedQuickIds.size - 1,
+                                                    modifier = Modifier.size(28.dp).testTag("move_down_$actionId")
+                                                ) {
+                                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move Down", modifier = Modifier.size(16.dp))
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        } else {
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                LazyVerticalGrid(
-                                    columns = GridCells.Fixed(3),
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        }
+                    } else {
+                        val quickActions = getActionsForTab(TAB_INDEX_QUICK_ACTIONS, r, c, engine, settings)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 12.dp)
+                        ) {
+                            if (quickActions.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    items(quickActions, key = { it.actionId }) { action ->
-                                        val isFocused = focusedActionId == action.actionId
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = if (isFocused) selectedCellColor.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
-                                            border = if (isFocused) BorderStroke(2.dp, selectedCellColor) else null,
-                                            tonalElevation = if (isFocused) 6.dp else 2.dp,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(min = 48.dp)
-                                                .testTag("action_${action.actionId}")
-                                                .semantics(mergeDescendants = true) {
-                                                    role = androidx.compose.ui.semantics.Role.Button
-                                                    contentDescription = action.title + (if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else "") + (if (isFocused) ", selected. Tap again to execute" else "") + ". Long press to remove from favorites."
-                                                }
-                                                .combinedClickable(
-                                                    onClick = {
-                                                        if (settings.overflowMenuTwoStepMode) {
-                                                            if (focusedActionId != action.actionId) {
-                                                                focusedActionId = action.actionId
-                                                                if (settings.vibrateOnSelect) {
-                                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            "No Quick Actions added yet.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(Modifier.height(8.dp))
+                                        Button(
+                                            onClick = { showCustomizeDialog = true },
+                                            colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
+                                            modifier = Modifier.testTag("button_add_quick_action_empty")
+                                        ) {
+                                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Add Quick Actions")
+                                        }
+                                    }
+                                }
+                            } else {
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    LazyVerticalGrid(
+                                        columns = GridCells.Fixed(3),
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        items(quickActions, key = { it.actionId }) { action ->
+                                            val isFocused = focusedActionId == action.actionId
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isFocused) selectedCellColor.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
+                                                border = if (isFocused) BorderStroke(2.dp, selectedCellColor) else null,
+                                                tonalElevation = if (isFocused) 6.dp else 2.dp,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .heightIn(min = 48.dp)
+                                                    .testTag("action_${action.actionId}")
+                                                    .semantics(mergeDescendants = true) {
+                                                        role = androidx.compose.ui.semantics.Role.Button
+                                                        contentDescription = action.title + (if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else "") + (if (isFocused) ", selected. Tap again to execute" else "") + ". Long press to manage."
+                                                    }
+                                                    .combinedClickable(
+                                                        onClick = {
+                                                            if (settings.overflowMenuTwoStepMode) {
+                                                                if (focusedActionId != action.actionId) {
+                                                                    focusedActionId = action.actionId
+                                                                    if (settings.vibrateOnSelect) {
+                                                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    }
+                                                                    val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
+                                                                    viewModel.ttsManager.speak(announceText)
+                                                                } else {
+                                                                    if (settings.vibrateOnSelect) {
+                                                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    }
+                                                                    executeSpreadsheetAction(
+                                                                        actionId = action.actionId,
+                                                                        r = r,
+                                                                        c = c,
+                                                                        engine = engine,
+                                                                        viewModel = viewModel,
+                                                                        settings = settings,
+                                                                        context = context,
+                                                                        selectedColumn = selectedColumn,
+                                                                        onDismiss = onDismiss,
+                                                                        onEditCell = onEditCell,
+                                                                        onOpenColorPicker = onOpenColorPicker,
+                                                                        onOpenZoom = onOpenZoom,
+                                                                        onOpenFindReplace = onOpenFindReplace,
+                                                                        onConfirmClearCol = onConfirmClearCol,
+                                                                        onConfirmClearRow = onConfirmClearRow,
+                                                                        onConfirmDeleteRow = onConfirmDeleteRow,
+                                                                        onOpenResizeColumn = onOpenResizeColumn,
+                                                                        onOpenResizeRow = onOpenResizeRow
+                                                                    )
                                                                 }
-                                                                val announceText = action.title + if (!action.subtitle.isNullOrBlank()) ", ${action.subtitle}" else ""
-                                                                viewModel.ttsManager.speak(announceText)
                                                             } else {
+                                                                focusedActionId = null
                                                                 if (settings.vibrateOnSelect) {
                                                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                                 }
@@ -980,100 +1067,74 @@ fun ActionMenuSheet(
                                                                     onOpenResizeRow = onOpenResizeRow
                                                                 )
                                                             }
-                                                        } else {
-                                                            focusedActionId = null
+                                                        },
+                                                        onLongClick = {
                                                             if (settings.vibrateOnSelect) {
-                                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                                             }
-                                                            executeSpreadsheetAction(
-                                                                actionId = action.actionId,
-                                                                r = r,
-                                                                c = c,
-                                                                engine = engine,
-                                                                viewModel = viewModel,
-                                                                settings = settings,
-                                                                context = context,
-                                                                selectedColumn = selectedColumn,
-                                                                onDismiss = onDismiss,
-                                                                onEditCell = onEditCell,
-                                                                onOpenColorPicker = onOpenColorPicker,
-                                                                onOpenZoom = onOpenZoom,
-                                                                onOpenFindReplace = onOpenFindReplace,
-                                                                onConfirmClearCol = onConfirmClearCol,
-                                                                onConfirmClearRow = onConfirmClearRow,
-                                                                onConfirmDeleteRow = onConfirmDeleteRow,
-                                                                onOpenResizeColumn = onOpenResizeColumn,
-                                                                onOpenResizeRow = onOpenResizeRow
-                                                            )
+                                                            longPressActionItem = action
                                                         }
-                                                    },
-                                                    onLongClick = {
-                                                        if (settings.vibrateOnSelect) {
-                                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                        }
-                                                        viewModel.removeQuickAction(action.actionId)
-                                                        viewModel.ttsManager.speak("Removed ${action.title} from favorites")
-                                                    }
-                                                )
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 4.dp, vertical = 6.dp),
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                verticalArrangement = Arrangement.Center
+                                                    )
                                             ) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.Center
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                    verticalArrangement = Arrangement.Center
                                                 ) {
-                                                    Icon(
-                                                        imageVector = action.icon,
-                                                        contentDescription = null,
-                                                        tint = if (isFocused) selectedCellColor else themeAccentColor.copy(alpha = 0.85f),
-                                                        modifier = Modifier.size(17.dp)
-                                                    )
-                                                    Spacer(Modifier.width(4.dp))
-                                                    Text(
-                                                        text = action.title,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
-                                                        color = if (isFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                }
-                                                if (!action.subtitle.isNullOrBlank()) {
-                                                    Text(
-                                                        text = action.subtitle,
-                                                        fontSize = 8.sp,
-                                                        color = if (isFocused) selectedCellColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                                        lineHeight = 10.sp
-                                                    )
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = action.icon,
+                                                            contentDescription = null,
+                                                            tint = if (isFocused) selectedCellColor else themeAccentColor.copy(alpha = 0.85f),
+                                                            modifier = Modifier.size(17.dp)
+                                                        )
+                                                        Spacer(Modifier.width(4.dp))
+                                                        Text(
+                                                            text = action.title,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
+                                                            color = if (isFocused) selectedCellColor else MaterialTheme.colorScheme.onSurface,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                    if (!action.subtitle.isNullOrBlank()) {
+                                                        Text(
+                                                            text = action.subtitle,
+                                                            fontSize = 8.sp,
+                                                            color = if (isFocused) selectedCellColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                            lineHeight = 10.sp
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                FloatingActionButton(
-                                    onClick = { showCustomizeDialog = true },
-                                    containerColor = themeAccentColor,
-                                    contentColor = Color.White,
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .size(36.dp)
-                                        .semantics {
-                                            role = androidx.compose.ui.semantics.Role.Button
-                                            contentDescription = "Add Quick Action"
-                                        }
-                                        .testTag("fab_add_quick_action")
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = "Add Quick Action", modifier = Modifier.size(20.dp))
+                                    FloatingActionButton(
+                                        onClick = { showCustomizeDialog = true },
+                                        containerColor = themeAccentColor,
+                                        contentColor = Color.White,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(36.dp)
+                                            .semantics {
+                                                role = androidx.compose.ui.semantics.Role.Button
+                                                contentDescription = "Add Quick Action"
+                                            }
+                                            .testTag("fab_add_quick_action")
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "Add Quick Action", modifier = Modifier.size(20.dp))
+                                    }
                                 }
                             }
                         }
@@ -1208,7 +1269,92 @@ fun ActionMenuSheet(
                     }
                 }
             }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+
+            ScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage,
+                edgePadding = 8.dp,
+                containerColor = Color.Transparent,
+                contentColor = themeAccentColor,
+                divider = {},
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+            ) {
+                ACTION_MENU_TABS.forEachIndexed { index, tabName ->
+                    val isSelected = pagerState.currentPage == index
+                    Tab(
+                        selected = isSelected,
+                        onClick = {
+                            if (pagerState.currentPage != index) {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                                viewModel.ttsManager.speak("$tabName tab selected")
+                                viewModel.updateSettings(settings.copy(lastActionMenuTab = index))
+                            }
+                        },
+                        text = {
+                            Text(
+                                text = tabName,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 12.sp,
+                                color = if (isSelected) themeAccentColor else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        modifier = Modifier
+                            .semantics {
+                                role = androidx.compose.ui.semantics.Role.Tab
+                                selected = isSelected
+                                contentDescription = "$tabName tab, ${index + 1} of ${ACTION_MENU_TABS.size}, ${if (isSelected) "selected" else "not selected"}"
+                            }
+                            .testTag("tab_${tabName.lowercase().replace(" ", "_").replace("&", "and")}")
+                    )
+                }
+            }
         }
+    }
+
+    if (longPressActionItem != null) {
+        val act = longPressActionItem!!
+        AlertDialog(
+            onDismissRequest = { longPressActionItem = null },
+            title = { Text(act.title) },
+            text = { Text("Choose action for this quick access item:") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        isArrangeMode = true
+                        arrangedQuickIds = settings.quickActionIds
+                        longPressActionItem = null
+                    },
+                    modifier = Modifier.testTag("dialog_option_arrange")
+                ) {
+                    Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Arrange")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.removeQuickAction(act.actionId)
+                        viewModel.ttsManager.speak("Removed ${act.title} from favorites")
+                        longPressActionItem = null
+                    },
+                    modifier = Modifier.testTag("dialog_option_remove")
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        )
     }
 
     if (showCustomizeDialog) {

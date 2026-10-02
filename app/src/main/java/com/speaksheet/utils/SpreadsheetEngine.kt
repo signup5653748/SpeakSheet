@@ -1910,28 +1910,56 @@ class SpreadsheetEngine {
         return trimmed
     }
 
-    private fun evaluateFilter(formula: String, clean: String, originR: Int, originC: Int): String {
+    private fun getRowsDataForArgument(arg: String, originR: Int, originC: Int): List<List<String>> {
+        val trimmed = arg.trim()
+        val upper = trimmed.uppercase(Locale.ROOT)
+        if (upper.startsWith("FILTER(")) {
+            return getFilteredRowsData(trimmed, originR, originC)
+        }
+        if (upper.startsWith("UNIQUE(")) {
+            val rangeVals = evaluateRangeWithCoords(trimmed.substring(7, trimmed.length - 1).trim())
+            return rangeVals.map { listOf(it.third) }
+        }
+        val rangeStr = trimmed.uppercase(Locale.ROOT)
+        val parts = rangeStr.split(":")
+        if (parts.size != 2) return emptyList()
+        val start = parseCellReference(parts[0].trim()) ?: return emptyList()
+        val end = parseCellReference(parts[1].trim()) ?: return emptyList()
+        val rMin = minOf(start.first, end.first)
+        val rMax = maxOf(start.first, end.first)
+        val cMin = minOf(start.second, end.second)
+        val cMax = maxOf(start.second, end.second)
+
+        val rowsData = ArrayList<List<String>>()
+        for (r in rMin..rMax) {
+            val row = ArrayList<String>()
+            for (c in cMin..cMax) {
+                row.add(getCellValue(r, c))
+            }
+            rowsData.add(row)
+        }
+        return rowsData
+    }
+
+    private fun getFilteredRowsData(formula: String, originR: Int, originC: Int): List<List<String>> {
+        var clean = formula.trim()
+        if (clean.startsWith("=")) clean = clean.removePrefix("=").trim()
         val inner = clean.substring(6, clean.length - 1).trim()
         val args = splitArguments(inner)
-        if (args.size < 3) return "#VALUE!"
+        if (args.size < 3) return emptyList()
 
         val rangeStr = args[0].trim().uppercase(Locale.ROOT)
         val parts = rangeStr.split(":")
-        if (parts.size != 2) return "#VALUE!"
+        if (parts.size != 2) return emptyList()
 
-        val start = parseCellReference(parts[0].trim()) ?: return "#VALUE!"
-        val end = parseCellReference(parts[1].trim()) ?: return "#VALUE!"
+        val start = parseCellReference(parts[0].trim()) ?: return emptyList()
+        val end = parseCellReference(parts[1].trim()) ?: return emptyList()
 
         val rMin = minOf(start.first, end.first)
         val rMax = maxOf(start.first, end.first)
         val cMin = minOf(start.second, end.second)
         val cMax = maxOf(start.second, end.second)
 
-        if (originR in rMin..rMax && originC in cMin..cMax) {
-            return "#CIRCULAR!"
-        }
-
-        val rowsData = ArrayList<List<String>>()
         val condPairs = ArrayList<Pair<List<Triple<Int, Int, String>>, String>>()
         var i = 1
         while (i + 1 < args.size) {
@@ -1942,6 +1970,7 @@ class SpreadsheetEngine {
             i += 2
         }
 
+        val rowsData = ArrayList<List<String>>()
         for (r in rMin..rMax) {
             val rowIdx = r - rMin
             var matchAll = true
@@ -1960,7 +1989,11 @@ class SpreadsheetEngine {
                 rowsData.add(row)
             }
         }
+        return rowsData
+    }
 
+    private fun evaluateFilter(formula: String, clean: String, originR: Int, originC: Int): String {
+        val rowsData = getFilteredRowsData(clean, originR, originC)
         if (rowsData.isEmpty()) return "#N/A"
 
         if (originR < 0 || originC < 0) {
@@ -2077,17 +2110,8 @@ class SpreadsheetEngine {
         val args = splitArguments(inner)
         if (args.isEmpty()) return "#VALUE!"
 
-        val rangeStr = args[0].trim().uppercase(Locale.ROOT)
-        val parts = rangeStr.split(":")
-        if (parts.size != 2) return "#VALUE!"
-
-        val start = parseCellReference(parts[0].trim()) ?: return "#VALUE!"
-        val end = parseCellReference(parts[1].trim()) ?: return "#VALUE!"
-
-        val rMin = minOf(start.first, end.first)
-        val rMax = maxOf(start.first, end.first)
-        val cMin = minOf(start.second, end.second)
-        val cMax = maxOf(start.second, end.second)
+        val rowsData = getRowsDataForArgument(args[0], originR, originC)
+        if (rowsData.isEmpty()) return "#VALUE!"
 
         var sortCol = 1
         var isAscending = true
@@ -2107,23 +2131,7 @@ class SpreadsheetEngine {
             isAscending = arg2 != "DESC" && arg2 != "-1" && arg2 != "FALSE"
         }
 
-        // Circular reference check
-        if (originR in rMin..rMax && originC in cMin..cMax) {
-            return "#CIRCULAR!"
-        }
-
-        val rowsData = ArrayList<List<String>>()
-        for (r in rMin..rMax) {
-            val row = ArrayList<String>()
-            for (c in cMin..cMax) {
-                row.add(getCellValue(r, c))
-            }
-            rowsData.add(row)
-        }
-
-        if (rowsData.isEmpty()) return ""
-
-        val numColsInRange = (cMax - cMin + 1)
+        val numColsInRange = rowsData[0].size
         val sortColIdx = (sortCol - 1).coerceIn(0, numColsInRange - 1)
 
         val comparator = Comparator<List<String>> { row1, row2 ->
