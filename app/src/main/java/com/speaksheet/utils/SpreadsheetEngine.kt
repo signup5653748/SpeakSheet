@@ -2180,19 +2180,8 @@ class SpreadsheetEngine {
                 wrapEnabled = newArr
             }
 
-            val checkLimit = minOf(maxRow, 25)
             for (c in 0 until maxCol) {
-                if (customColWidthsDp.containsKey(c)) {
-                    colWidthsDp[c] = customColWidthsDp[c]!!
-                } else {
-                    var maxLen = 4
-                    for (r in 0 until checkLimit) {
-                        val len = getCellValue(r, c).length
-                        if (len > maxLen) maxLen = len
-                    }
-                    val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
-                    colWidthsDp[c] = calculatedW
-                }
+                colWidthsDp[c] = customColWidthsDp[c] ?: defaultColWidthDp
             }
 
             var currentX = 0f
@@ -2217,41 +2206,8 @@ class SpreadsheetEngine {
             return
         }
 
-        var colLayoutChanged = false
         if (dirtyColumns.isNotEmpty()) {
-            val minDirty = dirtyColumns.minOrNull() ?: 0
-            val checkLimit = minOf(maxRow, 25)
-            for (c in dirtyColumns) {
-                if (c in colWidthsDp.indices) {
-                    var maxLen = 4
-                    for (r in 0 until checkLimit) {
-                        val len = getCellValue(r, c).length
-                        if (len > maxLen) maxLen = len
-                    }
-                    val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
-                    if (colWidthsDp[c] != calculatedW) {
-                        colWidthsDp[c] = calculatedW
-                        colLayoutChanged = true
-                        if (isWrapEnabled(c)) {
-                            for (r in 0 until maxRow) {
-                                if (getCellValue(r, c).isNotEmpty()) {
-                                    dirtyRows.add(r)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             dirtyColumns.clear()
-
-            if (colLayoutChanged) {
-                var currentX = if (minDirty in colOffsetsPx.indices) colOffsetsPx[minDirty] else 0f
-                for (c in minDirty until maxCol) {
-                    colOffsetsPx[c] = currentX
-                    currentX += getColWidthDp(c) * density
-                }
-                totalWidthPx = currentX
-            }
         }
 
         if (dirtyRows.isNotEmpty()) {

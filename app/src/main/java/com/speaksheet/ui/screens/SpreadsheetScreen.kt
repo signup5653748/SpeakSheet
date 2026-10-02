@@ -1420,6 +1420,7 @@ fun SpreadsheetScreen(
     var colorPickerState by remember { mutableStateOf<ColorPickerState?>(null) }
     var showQuickActionsCustomizer by remember { mutableStateOf(false) }
     var focusedOverflowMenuButtonId by remember { mutableStateOf<String?>(null) }
+    var activeEditTextFieldUpdater by remember { mutableStateOf<((String) -> Unit)?>(null) }
 
     val initialTab = settings.lastActionMenuTab.coerceIn(0, ACTION_MENU_TABS.lastIndex)
     val pagerState = rememberPagerState(
@@ -1517,7 +1518,11 @@ fun SpreadsheetScreen(
             val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
             val spoken = matches?.firstOrNull()
             if (!spoken.isNullOrBlank()) {
-                viewModel.insertVoiceText(spoken, selectedCell, editingCell)
+                if (activeEditTextFieldUpdater != null) {
+                    activeEditTextFieldUpdater?.invoke(spoken)
+                } else {
+                    viewModel.insertVoiceText(spoken, selectedCell, editingCell)
+                }
             }
         }
     }
@@ -3809,6 +3814,16 @@ fun SpreadsheetScreen(
         val formulaOrValue = engine.getCellFormulaOrValue(r, c)
         var textFieldValue by remember(r, c) {
             mutableStateOf(TextFieldValue(formulaOrValue, selection = TextRange(formulaOrValue.length)))
+        }
+        DisposableEffect(r, c) {
+            activeEditTextFieldUpdater = { spoken ->
+                val cur = textFieldValue.text
+                val updated = if (cur.isEmpty() || cur == "=") spoken else "$cur $spoken"
+                textFieldValue = TextFieldValue(updated, selection = TextRange(updated.length))
+            }
+            onDispose {
+                activeEditTextFieldUpdater = null
+            }
         }
         var isFormulaExpanded by remember(r, c) {
             mutableStateOf(formulaOrValue.startsWith("="))
