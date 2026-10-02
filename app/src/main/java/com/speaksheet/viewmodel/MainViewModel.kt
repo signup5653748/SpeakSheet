@@ -164,6 +164,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun moveQuickAction(actionId: String, direction: Int) {
+        viewModelScope.launch {
+            val current = appSettings.value
+            val mutableList = current.quickActionIds.toMutableList()
+            val index = mutableList.indexOf(actionId)
+            if (index != -1) {
+                val newIndex = (index + direction).coerceIn(0, mutableList.lastIndex)
+                mutableList.removeAt(index)
+                mutableList.add(newIndex, actionId)
+                settingsRepository.updateSettings(current.copy(quickActionIds = mutableList))
+            }
+        }
+    }
+
     fun openNewSpreadsheet() {
         val defaultR = appSettings.value.defaultRows
         val defaultC = appSettings.value.defaultCols

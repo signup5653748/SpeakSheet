@@ -400,7 +400,6 @@ fun getActionsForTab(
         TAB_INDEX_DATA -> listOf(
             MenuItemData("Sort A-Z", Icons.Default.ArrowUpward, "sort_asc"),
             MenuItemData("Sort Z-A", Icons.Default.ArrowDownward, "sort_desc"),
-            MenuItemData("Filter", Icons.Default.FilterList, "filter"),
             MenuItemData("Find & Replace", Icons.Default.Search, "find_replace")
         )
         TAB_INDEX_ROW -> listOf(
@@ -437,7 +436,6 @@ fun executeSpreadsheetAction(
     onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
     onOpenZoom: () -> Unit,
     onOpenFindReplace: () -> Unit,
-    onOpenFilter: (Int) -> Unit,
     onConfirmClearCol: (Int) -> Unit,
     onConfirmClearRow: (Int) -> Unit,
     onConfirmDeleteRow: (Int) -> Unit,
@@ -558,10 +556,6 @@ fun executeSpreadsheetAction(
 
         "sort_asc" -> viewModel.sortColumn(c, true)
         "sort_desc" -> viewModel.sortColumn(c, false)
-        "filter" -> {
-            onDismiss()
-            onOpenFilter(c)
-        }
         "find_replace" -> {
             onDismiss()
             onOpenFindReplace()
@@ -770,7 +764,6 @@ fun ActionMenuSheet(
     onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
     onOpenZoom: () -> Unit,
     onOpenFindReplace: () -> Unit,
-    onOpenFilter: (Int) -> Unit,
     onConfirmClearCol: (Int) -> Unit,
     onConfirmClearRow: (Int) -> Unit,
     onConfirmDeleteRow: (Int) -> Unit,
@@ -980,7 +973,6 @@ fun ActionMenuSheet(
                                                                     onOpenColorPicker = onOpenColorPicker,
                                                                     onOpenZoom = onOpenZoom,
                                                                     onOpenFindReplace = onOpenFindReplace,
-                                                                    onOpenFilter = onOpenFilter,
                                                                     onConfirmClearCol = onConfirmClearCol,
                                                                     onConfirmClearRow = onConfirmClearRow,
                                                                     onConfirmDeleteRow = onConfirmDeleteRow,
@@ -1007,7 +999,6 @@ fun ActionMenuSheet(
                                                                 onOpenColorPicker = onOpenColorPicker,
                                                                 onOpenZoom = onOpenZoom,
                                                                 onOpenFindReplace = onOpenFindReplace,
-                                                                onOpenFilter = onOpenFilter,
                                                                 onConfirmClearCol = onConfirmClearCol,
                                                                 onConfirmClearRow = onConfirmClearRow,
                                                                 onConfirmDeleteRow = onConfirmDeleteRow,
@@ -1139,7 +1130,6 @@ fun ActionMenuSheet(
                                                     onOpenColorPicker = onOpenColorPicker,
                                                     onOpenZoom = onOpenZoom,
                                                     onOpenFindReplace = onOpenFindReplace,
-                                                    onOpenFilter = onOpenFilter,
                                                     onConfirmClearCol = onConfirmClearCol,
                                                     onConfirmClearRow = onConfirmClearRow,
                                                     onConfirmDeleteRow = onConfirmDeleteRow,
@@ -1166,7 +1156,6 @@ fun ActionMenuSheet(
                                                 onOpenColorPicker = onOpenColorPicker,
                                                 onOpenZoom = onOpenZoom,
                                                 onOpenFindReplace = onOpenFindReplace,
-                                                onOpenFilter = onOpenFilter,
                                                 onConfirmClearCol = onConfirmClearCol,
                                                 onConfirmClearRow = onConfirmClearRow,
                                                 onConfirmDeleteRow = onConfirmDeleteRow,
@@ -1421,6 +1410,7 @@ fun SpreadsheetScreen(
     var showQuickActionsCustomizer by remember { mutableStateOf(false) }
     var focusedOverflowMenuButtonId by remember { mutableStateOf<String?>(null) }
     var activeEditTextFieldUpdater by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    var quickActionToManage by remember { mutableStateOf<MenuItemData?>(null) }
 
     val initialTab = settings.lastActionMenuTab.coerceIn(0, ACTION_MENU_TABS.lastIndex)
     val pagerState = rememberPagerState(
@@ -1440,9 +1430,6 @@ fun SpreadsheetScreen(
     var sheetToDelete by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var showAddSheetDialog by remember { mutableStateOf(false) }
     var newSheetNameInput by remember { mutableStateOf("") }
-
-    var filterColIndex by remember { mutableStateOf<Int?>(null) }
-    var filterSelectedValues by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val matches = remember(findQuery, matchCase, refreshTrigger) {
         if (findQuery.isEmpty()) emptyList() else engine.findMatches(findQuery, matchCase)
@@ -2050,11 +2037,6 @@ fun SpreadsheetScreen(
                                                     },
                                                     onOpenZoom = { showZoomControlsMenu = true },
                                                     onOpenFindReplace = { showFindReplace = true },
-                                                    onOpenFilter = { col ->
-                                                        filterColIndex = col
-                                                        val dist = engine.getDistinctValuesForColumn(col)
-                                                        filterSelectedValues = dist.toSet()
-                                                    },
                                                     onConfirmClearCol = { col -> clearColConfirm = col },
                                                     onConfirmClearRow = { row -> clearRowConfirm = row },
                                                     onConfirmDeleteRow = { row -> deleteRowConfirm = row },
@@ -3842,22 +3824,79 @@ fun SpreadsheetScreen(
             val name: String,
             val template: String,
             val cursorOffset: Int,
-            val description: String
+            val description: String,
+            val category: String
         )
+
+        val formulaCategories = listOf("Math", "Text", "Logical", "Date", "Lookup", "Statistical")
+        var selectedFormulaCategory by remember { mutableStateOf("Math") }
 
         val formulaOptions = remember {
             listOf(
-                FormulaChipItem("SUM", "=SUM(:)", 5, "Insert SUM formula: calculate sum of range values"),
-                FormulaChipItem("AVERAGE", "=AVERAGE(:)", 9, "Insert AVERAGE formula: calculate average of range values"),
-                FormulaChipItem("COUNT", "=COUNT(:)", 7, "Insert COUNT formula: count numeric values in range"),
-                FormulaChipItem("MIN", "=MIN(:)", 5, "Insert MIN formula: calculate minimum value in range"),
-                FormulaChipItem("MAX", "=MAX(:)", 5, "Insert MAX formula: calculate maximum value in range"),
-                FormulaChipItem("SORT", "=SORT(:)", 6, "Insert SORT formula: sort range values ascending or descending"),
-                FormulaChipItem("IF", "=IF(, , )", 4, "Insert IF conditional formula"),
-                FormulaChipItem("SUMIF", "=SUMIF(, )", 7, "Insert SUMIF conditional sum formula"),
-                FormulaChipItem("COUNTIF", "=COUNTIF(, )", 9, "Insert COUNTIF conditional count formula"),
-                FormulaChipItem("VLOOKUP", "=VLOOKUP(, , )", 9, "Insert VLOOKUP value lookup formula"),
-                FormulaChipItem("XLOOKUP", "=XLOOKUP(, , )", 9, "Insert XLOOKUP advanced lookup formula")
+                // Math
+                FormulaChipItem("SUM", "=SUM(:)", 5, "Insert SUM formula", "Math"),
+                FormulaChipItem("AVERAGE", "=AVERAGE(:)", 9, "Insert AVERAGE formula", "Math"),
+                FormulaChipItem("COUNT", "=COUNT(:)", 7, "Insert COUNT formula", "Math"),
+                FormulaChipItem("MIN", "=MIN(:)", 5, "Insert MIN formula", "Math"),
+                FormulaChipItem("MAX", "=MAX(:)", 5, "Insert MAX formula", "Math"),
+                FormulaChipItem("ROUND", "=ROUND(, 2)", 7, "Insert ROUND formula", "Math"),
+                FormulaChipItem("ROUNDUP", "=ROUNDUP(, 2)", 10, "Insert ROUNDUP formula", "Math"),
+                FormulaChipItem("ROUNDDOWN", "=ROUNDDOWN(, 2)", 12, "Insert ROUNDDOWN formula", "Math"),
+                FormulaChipItem("ABS", "=ABS()", 5, "Insert ABS formula", "Math"),
+                FormulaChipItem("SQRT", "=SQRT()", 6, "Insert SQRT formula", "Math"),
+                FormulaChipItem("POWER", "=POWER(, )", 7, "Insert POWER formula", "Math"),
+                FormulaChipItem("MOD", "=MOD(, )", 5, "Insert MOD formula", "Math"),
+                FormulaChipItem("INT", "=INT()", 5, "Insert INT formula", "Math"),
+
+                // Text
+                FormulaChipItem("CONCATENATE", "=CONCATENATE(, )", 13, "Insert CONCATENATE formula", "Text"),
+                FormulaChipItem("LEFT", "=LEFT(, )", 6, "Insert LEFT formula", "Text"),
+                FormulaChipItem("RIGHT", "=RIGHT(, )", 7, "Insert RIGHT formula", "Text"),
+                FormulaChipItem("MID", "=MID(, , )", 5, "Insert MID formula", "Text"),
+                FormulaChipItem("LEN", "=LEN()", 5, "Insert LEN formula", "Text"),
+                FormulaChipItem("TRIM", "=TRIM()", 6, "Insert TRIM formula", "Text"),
+                FormulaChipItem("PROPER", "=PROPER()", 8, "Insert PROPER formula", "Text"),
+                FormulaChipItem("UPPER", "=UPPER()", 7, "Insert UPPER formula", "Text"),
+                FormulaChipItem("LOWER", "=LOWER()", 7, "Insert LOWER formula", "Text"),
+                FormulaChipItem("SUBSTITUTE", "=SUBSTITUTE(, , )", 12, "Insert SUBSTITUTE formula", "Text"),
+                FormulaChipItem("TEXT", "=TEXT(, \"\")", 7, "Insert TEXT formula", "Text"),
+
+                // Logical
+                FormulaChipItem("IF", "=IF(, , )", 4, "Insert IF formula", "Logical"),
+                FormulaChipItem("AND", "=AND(, )", 5, "Insert AND formula", "Logical"),
+                FormulaChipItem("OR", "=OR(, )", 4, "Insert OR formula", "Logical"),
+                FormulaChipItem("NOT", "=NOT()", 5, "Insert NOT formula", "Logical"),
+                FormulaChipItem("IFERROR", "=IFERROR(, )", 9, "Insert IFERROR formula", "Logical"),
+                FormulaChipItem("ISBLANK", "=ISBLANK()", 9, "Insert ISBLANK formula", "Logical"),
+                FormulaChipItem("ISNUMBER", "=ISNUMBER()", 10, "Insert ISNUMBER formula", "Logical"),
+                FormulaChipItem("ISTEXT", "=ISTEXT()", 8, "Insert ISTEXT formula", "Logical"),
+
+                // Date
+                FormulaChipItem("TODAY", "=TODAY()", 7, "Insert TODAY formula", "Date"),
+                FormulaChipItem("NOW", "=NOW()", 5, "Insert NOW formula", "Date"),
+                FormulaChipItem("DATE", "=DATE(, , )", 6, "Insert DATE formula", "Date"),
+                FormulaChipItem("YEAR", "=YEAR()", 6, "Insert YEAR formula", "Date"),
+                FormulaChipItem("MONTH", "=MONTH()", 7, "Insert MONTH formula", "Date"),
+                FormulaChipItem("DAY", "=DAY()", 5, "Insert DAY formula", "Date"),
+                FormulaChipItem("DATEDIF", "=DATEDIF(, , \"D\")", 9, "Insert DATEDIF formula", "Date"),
+
+                // Lookup
+                FormulaChipItem("VLOOKUP", "=VLOOKUP(, , )", 9, "Insert VLOOKUP formula", "Lookup"),
+                FormulaChipItem("XLOOKUP", "=XLOOKUP(, , )", 9, "Insert XLOOKUP formula", "Lookup"),
+                FormulaChipItem("UNIQUE", "=UNIQUE(:)", 8, "Insert UNIQUE formula", "Lookup"),
+                FormulaChipItem("SORT", "=SORT(:)", 6, "Insert SORT formula", "Lookup"),
+                FormulaChipItem("SORTN", "=SORTN(:)", 7, "Insert SORTN formula", "Lookup"),
+                FormulaChipItem("FILTER", "=FILTER(:)", 8, "Insert FILTER formula", "Lookup"),
+                FormulaChipItem("INDEX", "=INDEX(: , )", 7, "Insert INDEX formula", "Lookup"),
+                FormulaChipItem("MATCH", "=MATCH(, :)", 7, "Insert MATCH formula", "Lookup"),
+
+                // Statistical
+                FormulaChipItem("SUMIF", "=SUMIF(, )", 7, "Insert SUMIF formula", "Statistical"),
+                FormulaChipItem("COUNTIF", "=COUNTIF(, )", 9, "Insert COUNTIF formula", "Statistical"),
+                FormulaChipItem("COUNTA", "=COUNTA(:)", 8, "Insert COUNTA formula", "Statistical"),
+                FormulaChipItem("COUNTBLANK", "=COUNTBLANK(:)", 12, "Insert COUNTBLANK formula", "Statistical"),
+                FormulaChipItem("MEDIAN", "=MEDIAN(:)", 8, "Insert MEDIAN formula", "Statistical"),
+                FormulaChipItem("MODE", "=MODE(:)", 6, "Insert MODE formula", "Statistical")
             )
         }
 
@@ -3968,12 +4007,37 @@ fun SpreadsheetScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "Available formulas (tap to insert at cursor):",
+                                text = "Formula categories:",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            // Tappable formula chips
+                            ScrollableTabRow(
+                                selectedTabIndex = formulaCategories.indexOf(selectedFormulaCategory).coerceAtLeast(0),
+                                edgePadding = 4.dp,
+                                containerColor = Color.Transparent,
+                                contentColor = themeAccentColor,
+                                divider = {},
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                formulaCategories.forEach { cat ->
+                                    val isSelected = selectedFormulaCategory == cat
+                                    Tab(
+                                        selected = isSelected,
+                                        onClick = { selectedFormulaCategory = cat },
+                                        text = {
+                                            Text(
+                                                text = cat,
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) themeAccentColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+
+                            val filteredChips = formulaOptions.filter { it.category == selectedFormulaCategory }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3981,7 +4045,7 @@ fun SpreadsheetScreen(
                                     .padding(vertical = 2.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                formulaOptions.forEach { fItem ->
+                                filteredChips.forEach { fItem ->
                                     SuggestionChip(
                                         onClick = {
                                             insertTemplate(fItem)
@@ -4798,134 +4862,6 @@ fun SpreadsheetScreen(
         )
     }
 
-    // Functional Column Filter Dialog
-    filterColIndex?.let { col ->
-        val distinctValues = remember(col) {
-            val list = engine.getDistinctValuesForColumn(col).toMutableList()
-            // check if there are blank cells
-            var hasBlanks = false
-            for (r in 0 until engine.maxRow) {
-                if (!engine.isTitleRow(r) && !engine.isBannerRow(r) && !engine.isHeaderRow(r)) {
-                    if (engine.getCellValue(r, col).isEmpty()) {
-                        hasBlanks = true
-                        break
-                    }
-                }
-            }
-            if (hasBlanks) list.add("(Blanks)")
-            list
-        }
-
-        AlertDialog(
-            onDismissRequest = { filterColIndex = null },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.FilterList,
-                    contentDescription = null,
-                    tint = themeAccentColor,
-                    modifier = Modifier.size(32.dp)
-                )
-            },
-            title = {
-                Text("Filter: Column ${engine.getColumnName(col)}", fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        TextButton(
-                            onClick = { filterSelectedValues = distinctValues.toSet() },
-                            modifier = Modifier.testTag("filter_select_all_btn")
-                        ) {
-                            Text("Select All")
-                        }
-                        TextButton(
-                            onClick = { filterSelectedValues = emptySet() },
-                            modifier = Modifier.testTag("filter_clear_all_btn")
-                        ) {
-                            Text("Clear All")
-                        }
-                    }
-
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 240.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        items(distinctValues) { valStr ->
-                            val isChecked = filterSelectedValues.contains(valStr)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        filterSelectedValues = if (isChecked) {
-                                            filterSelectedValues - valStr
-                                        } else {
-                                            filterSelectedValues + valStr
-                                        }
-                                    }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = isChecked,
-                                    onCheckedChange = { checked ->
-                                        filterSelectedValues = if (checked) {
-                                            filterSelectedValues + valStr
-                                        } else {
-                                            filterSelectedValues - valStr
-                                        }
-                                    },
-                                    colors = CheckboxDefaults.colors(checkedColor = themeAccentColor)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(valStr, fontSize = 14.sp)
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            val total = engine.clearColumnFilter()
-                            viewModel.ttsManager.speak("Filter cleared. Showing all $total rows.")
-                            filterColIndex = null
-                        },
-                        modifier = Modifier.testTag("filter_reset_button")
-                    ) {
-                        Text("Clear Filter")
-                    }
-                    Button(
-                        onClick = {
-                            val (visible, total) = engine.applyColumnFilter(col, filterSelectedValues)
-                            viewModel.ttsManager.speak("Showing $visible of $total rows.")
-                            filterColIndex = null
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
-                        modifier = Modifier.testTag("filter_apply_button")
-                    ) {
-                        Text("Apply")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { filterColIndex = null }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
     if (showActionMenuSheet) {
         val curR = selectedCell?.first ?: 0
         val curC = selectedCell?.second ?: 0
@@ -4953,11 +4889,6 @@ fun SpreadsheetScreen(
             onOpenFindReplace = {
                 showFindReplace = true
             },
-            onOpenFilter = { col ->
-                filterColIndex = col
-                val dist = engine.getDistinctValuesForColumn(col)
-                filterSelectedValues = dist.toSet()
-            },
             onConfirmClearCol = { col -> clearColConfirm = col },
             onConfirmClearRow = { row -> clearRowConfirm = row },
             onConfirmDeleteRow = { row -> deleteRowConfirm = row }
@@ -4978,6 +4909,78 @@ fun SpreadsheetScreen(
             c = curC,
             engine = engine,
             settings = settings
+        )
+    }
+
+    quickActionToManage?.let { action ->
+        AlertDialog(
+            onDismissRequest = { quickActionToManage = null },
+            title = { Text("Manage Quick Action: ${action.title}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Choose an action:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    
+                    TextButton(
+                        onClick = {
+                            viewModel.moveQuickAction(action.actionId, -1)
+                            viewModel.ttsManager.speak("Moved ${action.title} left")
+                            quickActionToManage = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = themeAccentColor)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Move Left / Earlier", color = themeAccentColor)
+                    }
+
+                    TextButton(
+                        onClick = {
+                            viewModel.moveQuickAction(action.actionId, 1)
+                            viewModel.ttsManager.speak("Moved ${action.title} right")
+                            quickActionToManage = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = themeAccentColor)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Move Right / Later", color = themeAccentColor)
+                    }
+
+                    TextButton(
+                        onClick = {
+                            quickActionToManage = null
+                            showQuickActionsCustomizer = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, tint = themeAccentColor)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Arrange Quick Actions (Custom Order)", color = themeAccentColor)
+                    }
+
+                    TextButton(
+                        onClick = {
+                            viewModel.removeQuickAction(action.actionId)
+                            viewModel.ttsManager.speak("Removed ${action.title} from favorites")
+                            quickActionToManage = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Remove from Quick Actions", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { quickActionToManage = null }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 
@@ -5014,6 +5017,7 @@ fun SpreadsheetScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResizeDimensionDialog(
     title: String,
@@ -5029,134 +5033,157 @@ fun ResizeDimensionDialog(
     var sliderValue by remember { mutableFloatStateOf(initialValueDp.coerceIn(minValueDp, maxValueDp)) }
     var textValue by remember { mutableStateOf(sliderValue.roundToInt().toString()) }
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        icon = {
-            Icon(
-                imageVector = if (dimensionName.contains("Column", ignoreCase = true) || dimensionName.contains("Width", ignoreCase = true)) Icons.Default.WidthNormal else Icons.Default.Height,
-                contentDescription = null,
-                tint = themeColor,
-                modifier = Modifier.size(32.dp)
-            )
-        },
-        title = {
-            Text(title, fontWeight = FontWeight.Bold)
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        modifier = Modifier.testTag("resize_dimension_sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedTextField(
-                    value = textValue,
-                    onValueChange = { input ->
-                        val digits = input.filter { it.isDigit() }
-                        textValue = digits
-                        digits.toFloatOrNull()?.let { num ->
-                            sliderValue = num.coerceIn(minValueDp, maxValueDp)
-                        }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (dimensionName.contains("Column", ignoreCase = true) || dimensionName.contains("Width", ignoreCase = true)) Icons.Default.WidthNormal else Icons.Default.Height,
+                        contentDescription = null,
+                        tint = themeColor,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            OutlinedTextField(
+                value = textValue,
+                onValueChange = { input ->
+                    val digits = input.filter { it.isDigit() }
+                    textValue = digits
+                    digits.toFloatOrNull()?.let { num ->
+                        sliderValue = num.coerceIn(minValueDp, maxValueDp)
+                    }
+                },
+                label = { Text("$dimensionName (20 - 500 dp)") },
+                suffix = { Text("dp") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth().testTag("resize_text_input")
+            )
+
+            // Visual Slider with Two-Way Binding
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Visual Slider",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${sliderValue.roundToInt()} dp",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = themeColor
+                    )
+                }
+
+                Slider(
+                    value = sliderValue,
+                    onValueChange = { newVal ->
+                        sliderValue = newVal
+                        textValue = newVal.roundToInt().toString()
                     },
-                    label = { Text("$dimensionName (20 - 500 dp)") },
-                    suffix = { Text("dp") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().testTag("resize_text_input")
+                    valueRange = minValueDp..maxValueDp,
+                    colors = SliderDefaults.colors(
+                        thumbColor = themeColor,
+                        activeTrackColor = themeColor
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("resize_slider")
                 )
 
-                // Visual Slider with Two-Way Binding
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Visual Drag",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "${sliderValue.roundToInt()} dp",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = themeColor
-                        )
-                    }
-
-                    Slider(
-                        value = sliderValue,
-                        onValueChange = { newVal ->
-                            sliderValue = newVal
-                            textValue = newVal.roundToInt().toString()
-                        },
-                        valueRange = minValueDp..maxValueDp,
-                        colors = SliderDefaults.colors(
-                            thumbColor = themeColor,
-                            activeTrackColor = themeColor
-                        ),
-                        modifier = Modifier.fillMaxWidth().testTag("resize_slider")
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("${minValueDp.toInt()} dp", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                        Text("${maxValueDp.toInt()} dp", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                    }
-                }
-
-                // Quick Preset Chips
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    presets.forEach { preset ->
-                        val isSelected = sliderValue.roundToInt() == preset
-                        AssistChip(
-                            onClick = {
-                                sliderValue = preset.toFloat()
-                                textValue = preset.toString()
-                            },
-                            label = { Text("${preset} dp", fontSize = 12.sp) },
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = if (isSelected) themeColor.copy(alpha = 0.15f) else Color.Transparent
-                            ),
-                            border = AssistChipDefaults.assistChipBorder(
-                                enabled = true,
-                                borderColor = if (isSelected) themeColor else MaterialTheme.colorScheme.outlineVariant
-                            )
-                        )
-                    }
+                    Text("${minValueDp.toInt()} dp", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    Text("${maxValueDp.toInt()} dp", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val finalVal = textValue.toFloatOrNull()?.coerceIn(minValueDp, maxValueDp) ?: sliderValue
-                    onConfirm(finalVal)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                modifier = Modifier.testTag("resize_apply_button")
+
+            // Quick Preset Chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("Apply")
+                presets.forEach { preset ->
+                    val isSelected = sliderValue.roundToInt() == preset
+                    AssistChip(
+                        onClick = {
+                            sliderValue = preset.toFloat()
+                            textValue = preset.toString()
+                        },
+                        label = { Text("${preset} dp", fontSize = 12.sp) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (isSelected) themeColor.copy(alpha = 0.15f) else Color.Transparent
+                        ),
+                        border = AssistChipDefaults.assistChipBorder(
+                            enabled = true,
+                            borderColor = if (isSelected) themeColor else MaterialTheme.colorScheme.outlineVariant
+                        )
+                    )
+                }
             }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("resize_cancel_button")
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Cancel")
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.testTag("resize_cancel_button")
+                ) {
+                    Text("Cancel")
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val finalVal = textValue.toFloatOrNull()?.coerceIn(minValueDp, maxValueDp) ?: sliderValue
+                        onConfirm(finalVal)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                    modifier = Modifier.testTag("resize_apply_button")
+                ) {
+                    Text("Apply")
+                }
             }
         }
-    )
+    }
 }
 
 data class ColorSwatch(val name: String, val colorInt: Int)

@@ -16,6 +16,11 @@ import java.io.InputStreamReader
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.util.Locale
+import java.util.Date
+import java.text.SimpleDateFormat
+import java.math.BigDecimal
+import java.math.RoundingMode
+import kotlin.math.*
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -88,7 +93,6 @@ class SpreadsheetEngine {
         var wrapEnabled: BooleanArray = BooleanArray(15),
         val mergedRanges: HashSet<CellRange> = HashSet(),
         val headerRows: HashSet<Int> = HashSet(),
-        val hiddenRows: HashSet<Int> = HashSet(),
         val undoStack: ArrayDeque<EngineState> = ArrayDeque(),
         val redoStack: ArrayDeque<EngineState> = ArrayDeque()
     )
@@ -162,9 +166,6 @@ class SpreadsheetEngine {
 
     val headerRows: HashSet<Int>
         get() = currentSheet.headerRows
-
-    val hiddenRows: HashSet<Int>
-        get() = currentSheet.hiddenRows
 
     var wrapEnabled: BooleanArray
         get() = currentSheet.wrapEnabled
@@ -592,51 +593,6 @@ class SpreadsheetEngine {
         val fmt = getCellNumberFormat(r, c)
         return if (fmt != "General") formatDisplayValue(rawVal, fmt) else rawVal
     }
-
-    fun getDistinctValuesForColumn(c: Int): List<String> {
-        val set = LinkedHashSet<String>()
-        for (r in 0 until maxRow) {
-            if (!isTitleRow(r) && !isBannerRow(r) && !isHeaderRow(r)) {
-                val v = getCellValue(r, c)
-                if (v.isNotEmpty()) {
-                    set.add(v)
-                }
-            }
-        }
-        return set.toList()
-    }
-
-    fun applyColumnFilter(c: Int, allowedValues: Set<String>): Pair<Int, Int> {
-        hiddenRows.clear()
-        var totalDataRows = 0
-        for (r in 0 until maxRow) {
-            if (!isTitleRow(r) && !isBannerRow(r) && !isHeaderRow(r)) {
-                totalDataRows++
-                val v = getCellValue(r, c)
-                val checkVal = if (v.isEmpty()) "(Blanks)" else v
-                if (!allowedValues.contains(checkVal) && !allowedValues.contains(v)) {
-                    hiddenRows.add(r)
-                }
-            }
-        }
-        isFullLayoutDirty = true
-        val visibleDataRows = (totalDataRows - hiddenRows.size).coerceAtLeast(0)
-        return Pair(visibleDataRows, totalDataRows)
-    }
-
-    fun clearColumnFilter(): Int {
-        hiddenRows.clear()
-        isFullLayoutDirty = true
-        var totalDataRows = 0
-        for (r in 0 until maxRow) {
-            if (!isTitleRow(r) && !isBannerRow(r) && !isHeaderRow(r)) {
-                totalDataRows++
-            }
-        }
-        return totalDataRows
-    }
-
-    fun isRowHidden(r: Int): Boolean = hiddenRows.contains(r)
 
     fun getCellFormulaOrValue(r: Int, c: Int): String {
         val targetC = if (isBannerRow(r)) 0 else c
@@ -1660,56 +1616,267 @@ class SpreadsheetEngine {
 
     private fun evaluateFormula(formula: String, originR: Int = -1, originC: Int = -1): String {
         try {
-            val clean = formula.trim().removePrefix("=").trim()
+            var clean = formula.trim()
+            if (clean.startsWith("=")) clean = clean.removePrefix("=").trim()
+
+            // Handle string concatenation operator '&'
+            if (clean.contains("&") && !clean.startsWith("\"")) {
+                val parts = clean.split("&")
+                val sb = StringBuilder()
+                for (part in parts) {
+                    sb.append(evaluateExpression(part.trim(), originR, originC))
+                }
+                return sb.toString()
+            }
+
             val upper = clean.uppercase(Locale.ROOT)
+            val openParen = upper.indexOf('(')
+            if (openParen != -1 && upper.endsWith(")")) {
+                val funcName = upper.substring(0, openParen).trim()
+                val inner = clean.substring(openParen + 1, clean.length - 1).trim()
+                val args = splitArguments(inner)
 
-            if (upper.startsWith("SUM(") && upper.endsWith(")")) {
-                val rangeStr = upper.substring(4, upper.length - 1)
-                val sum = evaluateRange(rangeStr).sum()
-                return formatNumber(sum)
-            }
-            if (upper.startsWith("AVERAGE(") && upper.endsWith(")")) {
-                val rangeStr = upper.substring(8, upper.length - 1)
-                val vals = evaluateRange(rangeStr)
-                if (vals.isEmpty()) return "0"
-                return formatNumber(vals.average())
-            }
-            if (upper.startsWith("COUNT(") && upper.endsWith(")")) {
-                val rangeStr = upper.substring(6, upper.length - 1)
-                val vals = evaluateRange(rangeStr)
-                return vals.size.toString()
-            }
-            if (upper.startsWith("MIN(") && upper.endsWith(")")) {
-                val rangeStr = upper.substring(4, upper.length - 1)
-                val vals = evaluateRange(rangeStr)
-                return if (vals.isNotEmpty()) formatNumber(vals.minOrNull() ?: 0.0) else "0"
-            }
-            if (upper.startsWith("MAX(") && upper.endsWith(")")) {
-                val rangeStr = upper.substring(4, upper.length - 1)
-                val vals = evaluateRange(rangeStr)
-                return if (vals.isNotEmpty()) formatNumber(vals.maxOrNull() ?: 0.0) else "0"
-            }
-            if (upper.startsWith("SORT(") && upper.endsWith(")")) {
-                return evaluateSort(formula, clean, originR, originC)
-            }
-            if (upper.startsWith("IF(") && upper.endsWith(")")) {
-                return evaluateIf(upper.substring(3, upper.length - 1))
-            }
-            if (upper.startsWith("SUMIF(") && upper.endsWith(")")) {
-                return evaluateSumIf(upper.substring(6, upper.length - 1))
-            }
-            if (upper.startsWith("COUNTIF(") && upper.endsWith(")")) {
-                return evaluateCountIf(upper.substring(8, upper.length - 1))
-            }
-            if (upper.startsWith("VLOOKUP(") && upper.endsWith(")")) {
-                return evaluateVLookup(upper.substring(8, upper.length - 1))
-            }
-            if (upper.startsWith("XLOOKUP(") && upper.endsWith(")")) {
-                return evaluateXLookup(upper.substring(8, upper.length - 1))
+                when (funcName) {
+                    "SUM" -> {
+                        val sum = args.sumOf { evaluateRange(evaluateExpression(it, originR, originC)).sum() }
+                        return formatNumber(sum)
+                    }
+                    "AVERAGE" -> {
+                        val vals = args.flatMap { evaluateRange(evaluateExpression(it, originR, originC)) }
+                        if (vals.isEmpty()) return "0"
+                        return formatNumber(vals.average())
+                    }
+                    "COUNT" -> {
+                        val vals = args.flatMap { evaluateRange(evaluateExpression(it, originR, originC)) }
+                        return vals.size.toString()
+                    }
+                    "MIN" -> {
+                        val vals = args.flatMap { evaluateRange(evaluateExpression(it, originR, originC)) }
+                        return if (vals.isNotEmpty()) formatNumber(vals.minOrNull() ?: 0.0) else "0"
+                    }
+                    "MAX" -> {
+                        val vals = args.flatMap { evaluateRange(evaluateExpression(it, originR, originC)) }
+                        return if (vals.isNotEmpty()) formatNumber(vals.maxOrNull() ?: 0.0) else "0"
+                    }
+                    "SORT" -> return evaluateSort(formula, clean, originR, originC)
+                    "FILTER" -> return evaluateFilter(formula, clean, originR, originC)
+                    "IF" -> return evaluateIf(inner)
+                    "SUMIF" -> return evaluateSumIf(inner)
+                    "COUNTIF" -> return evaluateCountIf(inner)
+                    "VLOOKUP" -> return evaluateVLookup(inner)
+                    "XLOOKUP" -> return evaluateXLookup(inner)
+
+                    // Math
+                    "ROUND" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        val decimals = evaluateExpression(args.getOrNull(1) ?: "0", originR, originC).toIntOrNull() ?: 0
+                        return formatNumber(BigDecimal(v).setScale(decimals, RoundingMode.HALF_UP).toDouble())
+                    }
+                    "ROUNDUP" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        val decimals = evaluateExpression(args.getOrNull(1) ?: "0", originR, originC).toIntOrNull() ?: 0
+                        return formatNumber(BigDecimal(v).setScale(decimals, RoundingMode.UP).toDouble())
+                    }
+                    "ROUNDDOWN" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        val decimals = evaluateExpression(args.getOrNull(1) ?: "0", originR, originC).toIntOrNull() ?: 0
+                        return formatNumber(BigDecimal(v).setScale(decimals, RoundingMode.DOWN).toDouble())
+                    }
+                    "ABS" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        return formatNumber(kotlin.math.abs(v))
+                    }
+                    "SQRT" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        return if (v >= 0) formatNumber(kotlin.math.sqrt(v)) else "#NUM!"
+                    }
+                    "POWER" -> {
+                        val base = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        val exp = evaluateExpression(args.getOrNull(1) ?: "1", originR, originC).toDoubleOrNull() ?: 1.0
+                        return formatNumber(Math.pow(base, exp))
+                    }
+                    "MOD" -> {
+                        val a = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        val b = evaluateExpression(args.getOrNull(1) ?: "1", originR, originC).toDoubleOrNull() ?: 1.0
+                        if (b == 0.0) return "#DIV/0!"
+                        return formatNumber(a % b)
+                    }
+                    "INT" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "0", originR, originC).toDoubleOrNull() ?: 0.0
+                        return v.toInt().toString()
+                    }
+
+                    // Text
+                    "CONCATENATE" -> {
+                        return args.joinToString("") { evaluateExpression(it, originR, originC) }
+                    }
+                    "LEFT" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val num = evaluateExpression(args.getOrNull(1) ?: "1", originR, originC).toIntOrNull() ?: 1
+                        return text.take(num)
+                    }
+                    "RIGHT" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val num = evaluateExpression(args.getOrNull(1) ?: "1", originR, originC).toIntOrNull() ?: 1
+                        return text.takeLast(num)
+                    }
+                    "MID" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val start = (evaluateExpression(args.getOrNull(1) ?: "1", originR, originC).toIntOrNull() ?: 1) - 1
+                        val len = evaluateExpression(args.getOrNull(2) ?: "1", originR, originC).toIntOrNull() ?: 1
+                        val startIdx = start.coerceIn(0, text.length)
+                        val endIdx = (startIdx + len).coerceIn(0, text.length)
+                        return text.substring(startIdx, endIdx)
+                    }
+                    "LEN" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return text.length.toString()
+                    }
+                    "TRIM" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return text.trim()
+                    }
+                    "PROPER" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return text.split(" ").joinToString(" ") { it.lowercase(Locale.ROOT).replaceFirstChar { c -> c.uppercase(Locale.ROOT) } }
+                    }
+                    "UPPER" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return text.uppercase(Locale.ROOT)
+                    }
+                    "LOWER" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return text.lowercase(Locale.ROOT)
+                    }
+                    "SUBSTITUTE" -> {
+                        val text = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val oldStr = evaluateExpression(args.getOrNull(1) ?: "", originR, originC)
+                        val newStr = evaluateExpression(args.getOrNull(2) ?: "", originR, originC)
+                        return text.replace(oldStr, newStr)
+                    }
+                    "TEXT" -> {
+                        return evaluateExpression(args.getOrNull(0) ?: "0", originR, originC)
+                    }
+
+                    // Logical
+                    "AND" -> {
+                        val allTrue = args.all { evaluateCondition(evaluateExpression(it, originR, originC)) }
+                        return allTrue.toString().uppercase(Locale.ROOT)
+                    }
+                    "OR" -> {
+                        val anyTrue = args.any { evaluateCondition(evaluateExpression(it, originR, originC)) }
+                        return anyTrue.toString().uppercase(Locale.ROOT)
+                    }
+                    "NOT" -> {
+                        val res = evaluateCondition(evaluateExpression(args.getOrNull(0) ?: "FALSE", originR, originC))
+                        return (!res).toString().uppercase(Locale.ROOT)
+                    }
+                    "IFERROR" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val fallback = evaluateExpression(args.getOrNull(1) ?: "", originR, originC)
+                        if (v.startsWith("#") || v.contains("ERROR") || v.contains("DIV/0")) return fallback
+                        return v
+                    }
+                    "ISBLANK" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return v.isEmpty().toString().uppercase(Locale.ROOT)
+                    }
+                    "ISNUMBER" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return (v.toDoubleOrNull() != null).toString().uppercase(Locale.ROOT)
+                    }
+                    "ISTEXT" -> {
+                        val v = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return (v.toDoubleOrNull() == null && v.isNotEmpty()).toString().uppercase(Locale.ROOT)
+                    }
+
+                    // Date / Time
+                    "TODAY" -> {
+                        return java.time.LocalDate.now().toString()
+                    }
+                    "NOW" -> {
+                        return java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                    }
+                    "DATE" -> {
+                        val y = evaluateExpression(args.getOrNull(0) ?: "2026", originR, originC).toIntOrNull() ?: 2026
+                        val m = evaluateExpression(args.getOrNull(1) ?: "1", originR, originC).toIntOrNull() ?: 1
+                        val d = evaluateExpression(args.getOrNull(2) ?: "1", originR, originC).toIntOrNull() ?: 1
+                        return String.format(Locale.ROOT, "%04d-%02d-%02d", y, m, d)
+                    }
+                    "YEAR" -> {
+                        val dateStr = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        return dateStr.take(4)
+                    }
+                    "MONTH" -> {
+                        val dateStr = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val parts = dateStr.split("-")
+                        return if (parts.size >= 2) parts[1].toInt().toString() else "1"
+                    }
+                    "DAY" -> {
+                        val dateStr = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val parts = dateStr.split("-")
+                        return if (parts.size >= 3) parts[2].take(2).toInt().toString() else "1"
+                    }
+                    "DATEDIF" -> {
+                        val startStr = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+                        val endStr = evaluateExpression(args.getOrNull(1) ?: "", originR, originC)
+                        val unit = evaluateExpression(args.getOrNull(2) ?: "D", originR, originC).uppercase(Locale.ROOT)
+                        try {
+                            val start = java.time.LocalDate.parse(startStr.take(10))
+                            val end = java.time.LocalDate.parse(endStr.take(10))
+                            val p = java.time.Period.between(start, end)
+                            return when (unit) {
+                                "Y" -> p.years.toString()
+                                "M" -> (p.years * 12 + p.months).toString()
+                                else -> java.time.temporal.ChronoUnit.DAYS.between(start, end).toString()
+                            }
+                        } catch (_: Throwable) {
+                            return "0"
+                        }
+                    }
+
+                    // Lookup / Array
+                    "UNIQUE" -> {
+                        return evaluateUnique(args.getOrNull(0) ?: "", originR, originC)
+                    }
+                    "SORTN" -> {
+                        return evaluateSortN(args, originR, originC)
+                    }
+                    "INDEX" -> {
+                        return evaluateIndex(args, originR, originC)
+                    }
+                    "MATCH" -> {
+                        return evaluateMatch(args, originR, originC)
+                    }
+
+                    // Statistical
+                    "COUNTA" -> {
+                        val rangeVals = evaluateRangeWithCoords(args.getOrNull(0) ?: "")
+                        return rangeVals.count { it.third.isNotEmpty() }.toString()
+                    }
+                    "COUNTBLANK" -> {
+                        val rangeVals = evaluateRangeWithCoords(args.getOrNull(0) ?: "")
+                        return rangeVals.count { it.third.isEmpty() }.toString()
+                    }
+                    "MEDIAN" -> {
+                        val vals = args.flatMap { evaluateRange(evaluateExpression(it, originR, originC)) }.sorted()
+                        if (vals.isEmpty()) return "0"
+                        val mid = vals.size / 2
+                        val med = if (vals.size % 2 == 1) vals[mid] else (vals[mid - 1] + vals[mid]) / 2.0
+                        return formatNumber(med)
+                    }
+                    "MODE" -> {
+                        val vals = args.flatMap { evaluateRange(evaluateExpression(it, originR, originC)) }
+                        if (vals.isEmpty()) return "0"
+                        val freq = vals.groupingBy { it }.eachCount()
+                        val maxFreq = freq.maxOfOrNull { it.value } ?: 1
+                        val modeVal = freq.entries.firstOrNull { it.value == maxFreq }?.key ?: vals[0]
+                        return formatNumber(modeVal)
+                    }
+                }
             }
 
-            // Simple cell reference like =A1
-            val refCoords = parseCellReference(upper)
+            val refCoords = parseCellReference(clean)
             if (refCoords != null) {
                 return getCellValue(refCoords.first, refCoords.second)
             }
@@ -1718,6 +1885,191 @@ class SpreadsheetEngine {
         } catch (_: Throwable) {
             return formula
         }
+    }
+
+    private fun evaluateExpression(expr: String, originR: Int, originC: Int): String {
+        val trimmed = expr.trim()
+        if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+            return trimmed.removeSurrounding("\"")
+        }
+        val coords = parseCellReference(trimmed.uppercase(Locale.ROOT))
+        if (coords != null) {
+            return getCellValue(coords.first, coords.second)
+        }
+        val dVal = trimmed.toDoubleOrNull()
+        if (dVal != null) {
+            return formatNumber(dVal)
+        }
+        if (trimmed.startsWith("=")) {
+            return evaluateFormula(trimmed, originR, originC)
+        }
+        val upper = trimmed.uppercase(Locale.ROOT)
+        if (upper.contains("(") && upper.endsWith(")")) {
+            return evaluateFormula("=$trimmed", originR, originC)
+        }
+        return trimmed
+    }
+
+    private fun evaluateFilter(formula: String, clean: String, originR: Int, originC: Int): String {
+        val inner = clean.substring(6, clean.length - 1).trim()
+        val args = splitArguments(inner)
+        if (args.size < 3) return "#VALUE!"
+
+        val rangeStr = args[0].trim().uppercase(Locale.ROOT)
+        val parts = rangeStr.split(":")
+        if (parts.size != 2) return "#VALUE!"
+
+        val start = parseCellReference(parts[0].trim()) ?: return "#VALUE!"
+        val end = parseCellReference(parts[1].trim()) ?: return "#VALUE!"
+
+        val rMin = minOf(start.first, end.first)
+        val rMax = maxOf(start.first, end.first)
+        val cMin = minOf(start.second, end.second)
+        val cMax = maxOf(start.second, end.second)
+
+        if (originR in rMin..rMax && originC in cMin..cMax) {
+            return "#CIRCULAR!"
+        }
+
+        val rowsData = ArrayList<List<String>>()
+        val condPairs = ArrayList<Pair<List<Triple<Int, Int, String>>, String>>()
+        var i = 1
+        while (i + 1 < args.size) {
+            val cRangeStr = args[i].trim()
+            val cExpr = evaluateExpression(args[i + 1].trim(), originR, originC)
+            val cVals = evaluateRangeWithCoords(cRangeStr)
+            condPairs.add(Pair(cVals, cExpr))
+            i += 2
+        }
+
+        for (r in rMin..rMax) {
+            val rowIdx = r - rMin
+            var matchAll = true
+            for ((cVals, cExpr) in condPairs) {
+                val cellVal = cVals.getOrNull(rowIdx)?.third ?: ""
+                if (!matchesFilterCondition(cellVal, cExpr)) {
+                    matchAll = false
+                    break
+                }
+            }
+            if (matchAll) {
+                val row = ArrayList<String>()
+                for (c in cMin..cMax) {
+                    row.add(getCellValue(r, c))
+                }
+                rowsData.add(row)
+            }
+        }
+
+        if (rowsData.isEmpty()) return "#N/A"
+
+        if (originR < 0 || originC < 0) {
+            return rowsData[0].firstOrNull() ?: ""
+        }
+
+        val numRows = rowsData.size
+        val numCols = rowsData[0].size
+
+        var hasCollision = false
+        for (dr in 0 until numRows) {
+            for (dc in 0 until numCols) {
+                if (dr == 0 && dc == 0) continue
+                val targetKey = cellKey(originR + dr, originC + dc)
+                val existing = cells[targetKey]
+                if (existing != null && existing.raw.isNotEmpty()) {
+                    hasCollision = true
+                    break
+                }
+            }
+            if (hasCollision) break
+        }
+
+        if (hasCollision) {
+            return "#SPILL!"
+        }
+
+        for (dr in 0 until numRows) {
+            val row = rowsData[dr]
+            for (dc in 0 until row.size) {
+                if (dr == 0 && dc == 0) continue
+                val targetKey = cellKey(originR + dr, originC + dc)
+                spillOutputs[targetKey] = row[dc]
+                spillSources[targetKey] = cellKey(originR, originC)
+                if (originC + dc in 0 until maxCol) {
+                    dirtyColumns.add(originC + dc)
+                }
+            }
+        }
+
+        val reqR = originR + numRows
+        val reqC = originC + numCols
+        if (reqR > maxRow || reqC > maxCol) {
+            maxRow = maxOf(maxRow, reqR)
+            maxCol = maxOf(maxCol, reqC)
+            isFullLayoutDirty = true
+        }
+
+        return rowsData[0].firstOrNull() ?: ""
+    }
+
+    private fun matchesFilterCondition(value: String, criteria: String): Boolean {
+        val cleanCrit = criteria.trim()
+        val op = listOf(">=", "<=", "<>", ">", "<", "=").find { cleanCrit.startsWith(it) }
+        if (op != null) {
+            val targetStr = cleanCrit.removePrefix(op).trim().removeSurrounding("\"")
+            val vNum = value.toDoubleOrNull()
+            val tNum = targetStr.toDoubleOrNull()
+            if (vNum != null && tNum != null) {
+                return when (op) {
+                    ">" -> vNum > tNum; "<" -> vNum < tNum; ">=" -> vNum >= tNum; "<=" -> vNum <= tNum; "=" -> vNum == tNum; "<>" -> vNum != tNum; else -> false
+                }
+            } else {
+                val cmp = value.compareTo(targetStr, ignoreCase = true)
+                return when (op) { "=" -> cmp == 0; "<>" -> cmp != 0; ">" -> cmp > 0; "<" -> cmp < 0; ">=" -> cmp >= 0; "<=" -> cmp <= 0; else -> false }
+            }
+        }
+        return value.equals(cleanCrit.removeSurrounding("\""), ignoreCase = true)
+    }
+
+    private fun evaluateUnique(rangeStr: String, originR: Int, originC: Int): String {
+        val rangeVals = evaluateRangeWithCoords(rangeStr.trim().uppercase(Locale.ROOT))
+        if (rangeVals.isEmpty()) return "#VALUE!"
+        val uniqueVals = rangeVals.map { it.third }.distinct()
+        if (originR < 0 || originC < 0) return uniqueVals.firstOrNull() ?: ""
+
+        val numRows = uniqueVals.size
+        for (dr in 0 until numRows) {
+            if (dr == 0) continue
+            val targetKey = cellKey(originR + dr, originC)
+            spillOutputs[targetKey] = uniqueVals[dr]
+            spillSources[targetKey] = cellKey(originR, originC)
+        }
+        if (numRows + originR > maxRow) {
+            maxRow = maxOf(maxRow, originR + numRows)
+            isFullLayoutDirty = true
+        }
+        return uniqueVals.firstOrNull() ?: ""
+    }
+
+    private fun evaluateSortN(args: List<String>, originR: Int, originC: Int): String {
+        return evaluateSort("", "SORT(${args.joinToString(",")})", originR, originC)
+    }
+
+    private fun evaluateIndex(args: List<String>, originR: Int, originC: Int): String {
+        val rangeVals = evaluateRangeWithCoords(args.getOrNull(0)?.trim()?.uppercase(Locale.ROOT) ?: "")
+        val rIdx = (args.getOrNull(1)?.trim()?.toIntOrNull() ?: 1) - 1
+        return rangeVals.getOrNull(rIdx)?.third ?: "#REF!"
+    }
+
+    private fun evaluateMatch(args: List<String>, originR: Int, originC: Int): String {
+        val lookupVal = evaluateExpression(args.getOrNull(0) ?: "", originR, originC)
+        val rangeVals = evaluateRangeWithCoords(args.getOrNull(1)?.trim()?.uppercase(Locale.ROOT) ?: "")
+        for (i in rangeVals.indices) {
+            if (rangeVals[i].third.equals(lookupVal, ignoreCase = true)) {
+                return (i + 1).toString()
+            }
+        }
+        return "#N/A"
     }
 
     private fun evaluateSort(formula: String, clean: String, originR: Int, originC: Int): String {
@@ -1899,24 +2251,27 @@ class SpreadsheetEngine {
     fun sortColumn(col: Int, ascending: Boolean) {
         if (col !in 0 until maxCol) return
         val startRow = 1
-        val endRow = maxRow - 1
-        if (endRow < startRow) return
-
-        val rowsData = ArrayList<RowSortState>()
-        for (r in startRow..endRow) {
-            val rowValues = (0 until maxCol).map { c -> getCellFormulaOrValue(r, c) }
+        var lastDataRow = startRow
+        for (r in startRow until maxRow) {
             val hasContent = (0 until maxCol).any { c -> getCellValue(r, c).isNotEmpty() }
             if (hasContent) {
-                val rColor = getRowColor(r)
-                val rTextColor = getRowTextColor(r)
-                val cColors = mutableMapOf<Int, Int>()
-                val cTextColors = mutableMapOf<Int, Int>()
-                for (c in 0 until maxCol) {
-                    getCellColor(r, c)?.let { cColors[c] = it }
-                    getCellTextColor(r, c)?.let { cTextColors[c] = it }
-                }
-                rowsData.add(RowSortState(rowValues, rColor, rTextColor, cColors, cTextColors))
+                lastDataRow = r
             }
+        }
+        if (lastDataRow <= startRow) return
+
+        val rowsData = ArrayList<RowSortState>()
+        for (r in startRow..lastDataRow) {
+            val rowValues = (0 until maxCol).map { c -> getCellFormulaOrValue(r, c) }
+            val rColor = getRowColor(r)
+            val rTextColor = getRowTextColor(r)
+            val cColors = mutableMapOf<Int, Int>()
+            val cTextColors = mutableMapOf<Int, Int>()
+            for (c in 0 until maxCol) {
+                getCellColor(r, c)?.let { cColors[c] = it }
+                getCellTextColor(r, c)?.let { cTextColors[c] = it }
+            }
+            rowsData.add(RowSortState(rowValues, rColor, rTextColor, cColors, cTextColors))
         }
         if (rowsData.size <= 1) return
 
@@ -1924,9 +2279,11 @@ class SpreadsheetEngine {
             val v1 = p1.values.getOrElse(col) { "" }.trim()
             val v2 = p2.values.getOrElse(col) { "" }.trim()
 
-            if (v1.isEmpty() && v2.isEmpty()) return@Comparator 0
-            if (v1.isEmpty()) return@Comparator 1
-            if (v2.isEmpty()) return@Comparator -1
+            val empty1 = v1.isEmpty()
+            val empty2 = v2.isEmpty()
+            if (empty1 && empty2) return@Comparator 0
+            if (empty1) return@Comparator 1
+            if (empty2) return@Comparator -1
 
             val n1 = v1.removePrefix("$").removeSuffix("%").toDoubleOrNull()
             val n2 = v2.removePrefix("$").removeSuffix("%").toDoubleOrNull()
@@ -1944,17 +2301,20 @@ class SpreadsheetEngine {
         }
 
         val sorted = rowsData.sortedWith(comparator)
-        for (i in rowsData.indices) {
+
+        for (r in startRow..lastDataRow) {
+            for (c in 0 until maxCol) {
+                setCell(r, c, "")
+                setCellColor(r, c, null)
+                setCellTextColor(r, c, null)
+            }
+            setRowColor(r, null)
+            setRowTextColor(r, null)
+        }
+
+        for (i in sorted.indices) {
             val targetRow = startRow + i
             val state = sorted[i]
-            for (c in 0 until maxCol) {
-                setCell(targetRow, c, "")
-                setCellColor(targetRow, c, null)
-                setCellTextColor(targetRow, c, null)
-            }
-            setRowColor(targetRow, null)
-            setRowTextColor(targetRow, null)
-
             for (c in 0 until maxCol) {
                 val value = state.values.getOrElse(c) { "" }
                 if (value.isNotEmpty()) {
