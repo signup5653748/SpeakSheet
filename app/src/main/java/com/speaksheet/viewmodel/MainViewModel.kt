@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -617,15 +618,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateCell(row: Int, col: Int, value: String) {
-        val currentVal = spreadsheetEngine.getCellFormulaOrValue(row, col)
+        val targetCol = if (spreadsheetEngine.isBannerRow(row)) 0 else col
+        val currentVal = spreadsheetEngine.getCellFormulaOrValue(row, targetCol)
         if (currentVal != value) {
-            val colName = spreadsheetEngine.getColumnName(col)
-            spreadsheetEngine.pushUndo("Edit $colName${row + 1}")
+            val cellDesc = if (spreadsheetEngine.isBannerRow(row)) "Banner Row ${row + 1}" else "${spreadsheetEngine.getColumnName(targetCol)}${row + 1}"
+            spreadsheetEngine.pushUndo("Edit $cellDesc")
             updateUndoRedoState()
         }
         viewModelScope.launch {
             withContext(Dispatchers.Default) {
-                spreadsheetEngine.setCell(row, col, value)
+                spreadsheetEngine.setCell(row, targetCol, value)
             }
             _gridRefreshTrigger.value += 1
             
@@ -805,6 +807,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         spreadsheetEngine.pushUndo("Convert to Banner")
         updateUndoRedoState()
         viewModelScope.launch {
+            val existingText = (0 until spreadsheetEngine.maxCol)
+                .map { spreadsheetEngine.getCellValue(row, it) }
+                .firstOrNull { it.isNotEmpty() } ?: ""
+            if (existingText.isNotEmpty() && spreadsheetEngine.getCellValue(row, 0).isEmpty()) {
+                spreadsheetEngine.setCell(row, 0, existingText)
+            }
             spreadsheetEngine.mergeRange(row, 0, row, spreadsheetEngine.maxCol - 1)
             _gridRefreshTrigger.value += 1
             autoSaveCurrentFile()
@@ -871,7 +879,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             updateSettings(appSettings.value.copy(deleteMode = mode))
             val modeName = when (mode) {
-                DeleteMode.CLEAR_CELL -> "cell"
+                DeleteMode.CLEAR_TEXT -> "text"
+                DeleteMode.CLEAR_FORMATTING -> "formatting"
                 DeleteMode.CLEAR_ROW -> "row"
                 DeleteMode.CLEAR_COLUMN -> "column"
             }
@@ -890,17 +899,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (editingCell != null) {
             onUpdateEditingText?.invoke(text)
         } else if (selectedCell != null) {
-            val (r, c) = selectedCell
-            val colName = spreadsheetEngine.getColumnName(c)
-            spreadsheetEngine.pushUndo("Voice input $colName${r + 1}")
+            val (r, rawC) = selectedCell
+            val c = if (spreadsheetEngine.isBannerRow(r)) 0 else rawC
+            val cellName = if (spreadsheetEngine.isBannerRow(r)) "Banner Row ${r + 1}" else "${spreadsheetEngine.getColumnName(c)}${r + 1}"
+            spreadsheetEngine.pushUndo("Voice input $cellName")
             updateUndoRedoState()
             viewModelScope.launch {
                 spreadsheetEngine.setCell(r, c, text)
                 _gridRefreshTrigger.value += 1
                 autoSaveCurrentFile()
                 if (appSettings.value.speakAfterEditing) {
-                    val rowNum = r + 1
-                    ttsManager.speak("$colName$rowNum: $text")
+                    ttsManager.speak("$cellName: $text")
                 }
             }
         }
@@ -1209,6 +1218,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setColumnWidth(c: Int, widthDp: Float) {
+        val colName = spreadsheetEngine.getColumnName(c)
+        spreadsheetEngine.pushUndo("Resize Column $colName")
+        spreadsheetEngine.setColWidthDp(c, widthDp)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Column $colName width set to ${widthDp.roundToInt()} dp")
+    }
+
+    fun setRowHeight(r: Int, heightDp: Float) {
+        val rowNum = r + 1
+        spreadsheetEngine.pushUndo("Resize Row $rowNum")
+        spreadsheetEngine.setRowHeightDp(r, heightDp)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Row $rowNum height set to ${heightDp.roundToInt()} dp")
+    }
+
     fun deleteCell(row: Int, col: Int) {
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
@@ -1220,6 +1249,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
         ttsManager.speak("Deleted cell $cellName")
+    }
+
+    fun clearCellText(row: Int, col: Int) {
+        val targetCol = if (spreadsheetEngine.isBannerRow(row)) 0 else col
+        val cellName = if (spreadsheetEngine.isBannerRow(row)) "Banner Row ${row + 1}" else "${spreadsheetEngine.getColumnName(targetCol)}${row + 1}"
+        spreadsheetEngine.pushUndo("Clear text $cellName")
+        spreadsheetEngine.setCell(row, targetCol, "")
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        ttsManager.speak("Cleared text for $cellName")
+    }
+
+    fun clearCellFormatting(row: Int, col: Int) {
+        val targetCol = if (spreadsheetEngine.isBannerRow(row)) 0 else col
+        val cellName = if (spreadsheetEngine.isBannerRow(row)) "Banner Row ${row + 1}" else "${spreadsheetEngine.getColumnName(targetCol)}${row + 1}"
+        spreadsheetEngine.pushUndo("Clear formatting $cellName")
+        updateUndoRedoState()
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                spreadsheetEngine.setCellColor(row, targetCol, null)
+                spreadsheetEngine.setCellTextColor(row, targetCol, null)
+                spreadsheetEngine.setCellBold(row, targetCol, false)
+                spreadsheetEngine.setCellItalic(row, targetCol, false)
+            }
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Cleared formatting for $cellName")
+        }
     }
 
     fun undo() {

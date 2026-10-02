@@ -192,6 +192,8 @@ class SpreadsheetEngine {
     private var rowHeightsPx = FloatArray(0)
     private var colOffsetsPx = FloatArray(0)
     private var colWidthsDp = FloatArray(0)
+    val customColWidthsDp = HashMap<Int, Float>()
+    val customRowHeightsDp = HashMap<Int, Float>()
     private var isFullLayoutDirty = true
     private val dirtyColumns = HashSet<Int>()
     private val dirtyRows = HashSet<Int>()
@@ -637,7 +639,8 @@ class SpreadsheetEngine {
     fun isRowHidden(r: Int): Boolean = hiddenRows.contains(r)
 
     fun getCellFormulaOrValue(r: Int, c: Int): String {
-        return cells[cellKey(r, c)]?.raw ?: ""
+        val targetC = if (isBannerRow(r)) 0 else c
+        return cells[cellKey(r, targetC)]?.raw ?: ""
     }
 
     fun recalculateAllFormulas() {
@@ -664,7 +667,8 @@ class SpreadsheetEngine {
     }
 
     fun setCell(r: Int, c: Int, value: String) {
-        val key = cellKey(r, c)
+        val targetC = if (isBannerRow(r)) 0 else c
+        val key = cellKey(r, targetC)
         if (value.isEmpty()) {
             cells.remove(key)
             formulaCellKeys.remove(key)
@@ -680,9 +684,9 @@ class SpreadsheetEngine {
         }
         cellRightAlignedCache.remove(key)
 
-        if (r >= maxRow || c >= maxCol) {
+        if (r >= maxRow || targetC >= maxCol) {
             maxRow = maxOf(maxRow, r + 1)
-            maxCol = maxOf(maxCol, c + 1)
+            maxCol = maxOf(maxCol, targetC + 1)
             if (wrapEnabled.size < maxCol) {
                 val newArr = BooleanArray(maxCol)
                 wrapEnabled.copyInto(newArr)
@@ -690,9 +694,12 @@ class SpreadsheetEngine {
             }
             isFullLayoutDirty = true
         } else {
-            dirtyColumns.add(c)
-            if (isWrapEnabled(c)) {
+            dirtyColumns.add(targetC)
+            if (isWrapEnabled(targetC) || isBannerRow(r)) {
                 dirtyRows.add(r)
+            }
+            if (isBannerRow(r)) {
+                isFullLayoutDirty = true
             }
         }
 
@@ -2016,6 +2023,9 @@ class SpreadsheetEngine {
     }
 
     fun getRowHeightDp(r: Int, largeTouch: Boolean = currentLargeTouch): Float {
+        if (customRowHeightsDp.containsKey(r)) {
+            return customRowHeightsDp[r]!!
+        }
         if (r in rowHeightsPx.indices && rowHeightsPx[r] > 0f && currentDensity > 0f) {
             return rowHeightsPx[r] / currentDensity
         }
@@ -2023,10 +2033,35 @@ class SpreadsheetEngine {
     }
 
     fun getColWidthDp(c: Int): Float {
+        if (customColWidthsDp.containsKey(c)) {
+            return customColWidthsDp[c]!!
+        }
         if (c in colWidthsDp.indices && colWidthsDp[c] > 0f) {
             return colWidthsDp[c]
         }
         return defaultColWidthDp
+    }
+
+    fun setColWidthDp(c: Int, widthDp: Float) {
+        if (c in 0 until maxCol) {
+            val clamped = widthDp.coerceIn(20f, 500f)
+            customColWidthsDp[c] = clamped
+            if (c in colWidthsDp.indices) {
+                colWidthsDp[c] = clamped
+            }
+            isFullLayoutDirty = true
+        }
+    }
+
+    fun setRowHeightDp(r: Int, heightDp: Float) {
+        if (r in 0 until maxRow) {
+            val clamped = heightDp.coerceIn(20f, 500f)
+            customRowHeightsDp[r] = clamped
+            if (r in rowHeightsPx.indices && currentDensity > 0f) {
+                rowHeightsPx[r] = clamped * currentDensity
+            }
+            isFullLayoutDirty = true
+        }
     }
 
     fun isFullWidthRow(r: Int): Boolean {
@@ -2077,6 +2112,9 @@ class SpreadsheetEngine {
         largeTouch: Boolean,
         measureRowCellHeight: ((r: Int, c: Int, text: String, availableWidthPx: Float) -> Float)?
     ): Float {
+        if (customRowHeightsDp.containsKey(r)) {
+            return customRowHeightsDp[r]!! * density
+        }
         val baseH = (if (largeTouch) 44f else defaultRowHeightDp) * density
         var maxH = baseH
         if (isFullWidthRow(r)) {
@@ -2144,13 +2182,17 @@ class SpreadsheetEngine {
 
             val checkLimit = minOf(maxRow, 25)
             for (c in 0 until maxCol) {
-                var maxLen = 4
-                for (r in 0 until checkLimit) {
-                    val len = getCellValue(r, c).length
-                    if (len > maxLen) maxLen = len
+                if (customColWidthsDp.containsKey(c)) {
+                    colWidthsDp[c] = customColWidthsDp[c]!!
+                } else {
+                    var maxLen = 4
+                    for (r in 0 until checkLimit) {
+                        val len = getCellValue(r, c).length
+                        if (len > maxLen) maxLen = len
+                    }
+                    val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
+                    colWidthsDp[c] = calculatedW
                 }
-                val calculatedW = (maxLen * 8.5f + 24f).coerceIn(85f, 180f)
-                colWidthsDp[c] = calculatedW
             }
 
             var currentX = 0f
@@ -2330,6 +2372,22 @@ class SpreadsheetEngine {
         val eC = maxOf(startCol, endCol)
 
         mergedRanges.removeIf { it.contains(sR, sC) || it.contains(eR, eC) || (it.startRow >= sR && it.endRow <= eR && it.startCol >= sC && it.endCol <= eC) }
+
+        // If top-left cell is empty, preserve the first non-empty value in the range
+        var topLeftVal = getCellValue(sR, sC)
+        if (topLeftVal.isEmpty()) {
+            for (r in sR..eR) {
+                for (c in sC..eC) {
+                    val cellVal = getCellValue(r, c)
+                    if (cellVal.isNotEmpty()) {
+                        setCell(sR, sC, cellVal)
+                        topLeftVal = cellVal
+                        break
+                    }
+                }
+                if (topLeftVal.isNotEmpty()) break
+            }
+        }
 
         // Excel behavior: keep top-left value, clear others in the range
         for (r in sR..eR) {

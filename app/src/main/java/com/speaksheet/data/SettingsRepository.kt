@@ -21,7 +21,8 @@ enum class InteractionMode {
 }
 
 enum class DeleteMode {
-    CLEAR_CELL,
+    CLEAR_TEXT,
+    CLEAR_FORMATTING,
     CLEAR_ROW,
     CLEAR_COLUMN
 }
@@ -44,7 +45,7 @@ data class AppSettings(
     val defaultCols: Int = 26,
     val announceColumnFirst: Boolean = true,
     val showRowNumbers: Boolean = true,
-    val deleteMode: DeleteMode = DeleteMode.CLEAR_CELL,
+    val deleteMode: DeleteMode = DeleteMode.CLEAR_TEXT,
     val voiceTypingLanguage: String = "",
     val lastActionMenuTab: Int = 0,
     val showGridlines: Boolean = true,
@@ -110,7 +111,7 @@ class SettingsRepository(private val context: Context) {
                 defaultCols = preferences[PreferencesKeys.DEFAULT_COLS] ?: 26,
                 announceColumnFirst = preferences[PreferencesKeys.ANNOUNCE_COLUMN_FIRST] ?: true,
                 showRowNumbers = preferences[PreferencesKeys.SHOW_ROW_NUMBERS] ?: true,
-                deleteMode = DeleteMode.entries.getOrElse(preferences[PreferencesKeys.DELETE_MODE] ?: 0) { DeleteMode.CLEAR_CELL },
+                deleteMode = DeleteMode.entries.getOrElse(preferences[PreferencesKeys.DELETE_MODE] ?: 0) { DeleteMode.CLEAR_TEXT },
                 voiceTypingLanguage = preferences[PreferencesKeys.VOICE_TYPING_LANG] ?: "",
                 lastActionMenuTab = preferences[PreferencesKeys.LAST_ACTION_MENU_TAB] ?: 0,
                 showGridlines = preferences[PreferencesKeys.SHOW_GRIDLINES] ?: true,

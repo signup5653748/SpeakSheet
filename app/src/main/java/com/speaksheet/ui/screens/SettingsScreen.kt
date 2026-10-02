@@ -451,8 +451,8 @@ fun SettingColorPickerDialog(
                     val satBrush = remember {
                         Brush.verticalGradient(
                             listOf(
-                                Color.White,
-                                Color.Transparent
+                                Color.Transparent,
+                                Color.White
                             )
                         )
                     }

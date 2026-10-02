@@ -43,6 +43,7 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -83,6 +84,7 @@ import androidx.compose.material.icons.filled.FormatColorText
 import androidx.compose.material.icons.filled.FormatItalic
 import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Layers
@@ -103,6 +105,7 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VerticalAlignBottom
 import androidx.compose.material.icons.filled.VerticalAlignTop
+import androidx.compose.material.icons.filled.WidthNormal
 import androidx.compose.material.icons.filled.WrapText
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -113,8 +116,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -128,14 +133,19 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.*
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import com.speaksheet.utils.SpreadsheetEngine
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
@@ -328,7 +338,9 @@ fun getActionsForTab(
         }
         TAB_INDEX_CELL -> listOf(
             MenuItemData("Edit cell", Icons.Default.Edit, "edit"),
-            MenuItemData("Clear cell", Icons.Default.Delete, "clear_cell"),
+            MenuItemData("Clear text", Icons.Default.Delete, "clear_text"),
+            MenuItemData("Clear formatting", Icons.Default.Clear, "clear_formatting"),
+            MenuItemData("Clear cell", Icons.Default.DeleteSweep, "clear_cell"),
             MenuItemData(if (engine.getCellBold(r, c)) "Remove bold" else "Make bold", Icons.Default.FormatBold, "toggle_bold"),
             MenuItemData(if (engine.getCellItalic(r, c)) "Remove italic" else "Make italic", Icons.Default.FormatItalic, "toggle_italic"),
             MenuItemData(if (engine.isWrapEnabled(c)) "Disable wrap" else "Wrap text", Icons.Default.WrapText, "wrap_text"),
@@ -392,6 +404,7 @@ fun getActionsForTab(
             MenuItemData("Find & Replace", Icons.Default.Search, "find_replace")
         )
         TAB_INDEX_ROW -> listOf(
+            MenuItemData("Resize row", Icons.Default.Height, "resize_row", "Change height of selected row"),
             MenuItemData("Insert above", Icons.Default.Add, "insert_row_above"),
             MenuItemData("Insert below", Icons.Default.Add, "insert_row_below"),
             MenuItemData("Delete row", Icons.Default.Delete, "delete_row"),
@@ -401,6 +414,7 @@ fun getActionsForTab(
             MenuItemData("Speak row", Icons.AutoMirrored.Filled.VolumeUp, "speak_row")
         )
         else -> listOf(
+            MenuItemData("Resize col", Icons.Default.WidthNormal, "resize_column", "Change width of selected column"),
             MenuItemData("Speak col", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
             MenuItemData("Col color", Icons.Default.Palette, "column_color"),
             MenuItemData("Clear col", Icons.Default.Clear, "clear_column"),
@@ -426,12 +440,22 @@ fun executeSpreadsheetAction(
     onOpenFilter: (Int) -> Unit,
     onConfirmClearCol: (Int) -> Unit,
     onConfirmClearRow: (Int) -> Unit,
-    onConfirmDeleteRow: (Int) -> Unit
+    onConfirmDeleteRow: (Int) -> Unit,
+    onOpenResizeColumn: (Int) -> Unit = {},
+    onOpenResizeRow: (Int) -> Unit = {}
 ) {
     when (actionId) {
         "edit" -> {
             onDismiss()
             onEditCell(Pair(r, c), null)
+        }
+        "resize_column" -> {
+            onDismiss()
+            onOpenResizeColumn(selectedColumn ?: c)
+        }
+        "resize_row" -> {
+            onDismiss()
+            onOpenResizeRow(r)
         }
         "copy" -> {
             if (selectedColumn != null) {
@@ -452,6 +476,8 @@ fun executeSpreadsheetAction(
         "paste_formulas" -> viewModel.pasteSpecial(r, c, r, c, SpreadsheetEngine.PasteMode.FORMULAS_ONLY)
         "fill_down" -> viewModel.fillDown(r, c, minOf(r + 5, engine.maxRow - 1), c)
         "fill_right" -> viewModel.fillRight(r, c, r, minOf(c + 3, engine.maxCol - 1))
+        "clear_text" -> viewModel.clearCellText(r, c)
+        "clear_formatting" -> viewModel.clearCellFormatting(r, c)
         "clear_cell" -> viewModel.deleteCell(r, c)
 
         "toggle_bold" -> viewModel.setCellBold(r, c, !engine.getCellBold(r, c))
@@ -747,7 +773,9 @@ fun ActionMenuSheet(
     onOpenFilter: (Int) -> Unit,
     onConfirmClearCol: (Int) -> Unit,
     onConfirmClearRow: (Int) -> Unit,
-    onConfirmDeleteRow: (Int) -> Unit
+    onConfirmDeleteRow: (Int) -> Unit,
+    onOpenResizeColumn: (Int) -> Unit = {},
+    onOpenResizeRow: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
@@ -876,20 +904,6 @@ fun ActionMenuSheet(
                             .fillMaxSize()
                             .padding(horizontal = 12.dp)
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Tap to apply • Long-press to remove",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
                         if (quickActions.isEmpty()) {
                             Box(
                                 modifier = Modifier
@@ -969,7 +983,9 @@ fun ActionMenuSheet(
                                                                     onOpenFilter = onOpenFilter,
                                                                     onConfirmClearCol = onConfirmClearCol,
                                                                     onConfirmClearRow = onConfirmClearRow,
-                                                                    onConfirmDeleteRow = onConfirmDeleteRow
+                                                                    onConfirmDeleteRow = onConfirmDeleteRow,
+                                                                    onOpenResizeColumn = onOpenResizeColumn,
+                                                                    onOpenResizeRow = onOpenResizeRow
                                                                 )
                                                             }
                                                         } else {
@@ -994,7 +1010,9 @@ fun ActionMenuSheet(
                                                                 onOpenFilter = onOpenFilter,
                                                                 onConfirmClearCol = onConfirmClearCol,
                                                                 onConfirmClearRow = onConfirmClearRow,
-                                                                onConfirmDeleteRow = onConfirmDeleteRow
+                                                                onConfirmDeleteRow = onConfirmDeleteRow,
+                                                                onOpenResizeColumn = onOpenResizeColumn,
+                                                                onOpenResizeRow = onOpenResizeRow
                                                             )
                                                         }
                                                     },
@@ -1124,7 +1142,9 @@ fun ActionMenuSheet(
                                                     onOpenFilter = onOpenFilter,
                                                     onConfirmClearCol = onConfirmClearCol,
                                                     onConfirmClearRow = onConfirmClearRow,
-                                                    onConfirmDeleteRow = onConfirmDeleteRow
+                                                    onConfirmDeleteRow = onConfirmDeleteRow,
+                                                    onOpenResizeColumn = onOpenResizeColumn,
+                                                    onOpenResizeRow = onOpenResizeRow
                                                 )
                                             }
                                         } else {
@@ -1149,7 +1169,9 @@ fun ActionMenuSheet(
                                                 onOpenFilter = onOpenFilter,
                                                 onConfirmClearCol = onConfirmClearCol,
                                                 onConfirmClearRow = onConfirmClearRow,
-                                                onConfirmDeleteRow = onConfirmDeleteRow
+                                                onConfirmDeleteRow = onConfirmDeleteRow,
+                                                onOpenResizeColumn = onOpenResizeColumn,
+                                                onOpenResizeRow = onOpenResizeRow
                                             )
                                         }
                                     }
@@ -1389,6 +1411,12 @@ fun SpreadsheetScreen(
     var showZoomControlsMenu by remember { mutableStateOf(false) }
     var showColumnMenu by remember { mutableStateOf<Int?>(null) }
     var showRowMenu by remember { mutableStateOf<Int?>(null) }
+    var showResizeColumnDialog by remember { mutableStateOf<Int?>(null) }
+    var showResizeRowDialog by remember { mutableStateOf<Int?>(null) }
+    var activeColResizeDrag by remember { mutableStateOf<Int?>(null) }
+    var activeColResizeWidthDp by remember { mutableFloatStateOf(0f) }
+    var activeRowResizeDrag by remember { mutableStateOf<Int?>(null) }
+    var activeRowResizeHeightDp by remember { mutableFloatStateOf(0f) }
     var colorPickerState by remember { mutableStateOf<ColorPickerState?>(null) }
     var showQuickActionsCustomizer by remember { mutableStateOf(false) }
     var focusedOverflowMenuButtonId by remember { mutableStateOf<String?>(null) }
@@ -2024,7 +2052,9 @@ fun SpreadsheetScreen(
                                                     },
                                                     onConfirmClearCol = { col -> clearColConfirm = col },
                                                     onConfirmClearRow = { row -> clearRowConfirm = row },
-                                                    onConfirmDeleteRow = { row -> deleteRowConfirm = row }
+                                                    onConfirmDeleteRow = { row -> deleteRowConfirm = row },
+                                                    onOpenResizeColumn = { col -> showResizeColumnDialog = col },
+                                                    onOpenResizeRow = { row -> showResizeRowDialog = row }
                                                 )
                                             }
                                         },
@@ -2504,10 +2534,11 @@ fun SpreadsheetScreen(
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     val curRow = selectedCell?.first ?: 0
-                    val curCol = selectedCell?.second ?: 0
+                    val isBanner = engine.isBannerRow(curRow)
+                    val curCol = if (isBanner) 0 else (selectedCell?.second ?: 0)
                     val cellLetter = engine.getColumnName(curCol)
-                    val cellHeader = engine.getColumnHeaderName(curCol, curRow)
-                    val cellCoord = "$cellLetter${curRow + 1}"
+                    val cellHeader = if (isBanner) "Banner Row ${curRow + 1}" else engine.getColumnHeaderName(curCol, curRow)
+                    val cellCoord = if (isBanner) "Banner ${curRow + 1}" else "$cellLetter${curRow + 1}"
                     val cellVal = engine.getCellValue(curRow, curCol)
                     
                     // Top Row: Prominent Active Cell Card (Click to Edit) & Actions (Copy, Paste, Delete, Speak)
@@ -2527,7 +2558,7 @@ fun SpreadsheetScreen(
                                 .padding(end = 8.dp)
                                 .testTag("selected_cell_card")
                                 .clickable(
-                                    onClickLabel = "Edit cell $cellCoord"
+                                    onClickLabel = if (isBanner) "Edit banner row ${curRow + 1}" else "Edit cell $cellCoord"
                                 ) {
                                     editingCell = Pair(curRow, curCol)
                                 }
@@ -2550,7 +2581,7 @@ fun SpreadsheetScreen(
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    if (curRow > 0 && cellHeader.isNotEmpty() && !cellHeader.startsWith("Column ")) {
+                                    if (curRow > 0 && cellHeader.isNotEmpty() && !cellHeader.startsWith("Column ") && !isBanner) {
                                         Text(
                                             text = cellHeader,
                                             fontWeight = FontWeight.SemiBold,
@@ -2559,9 +2590,18 @@ fun SpreadsheetScreen(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
+                                    } else if (isBanner) {
+                                        Text(
+                                            text = "Full-width Banner",
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 11.sp,
+                                            color = themeAccentColor,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
                                     Text(
-                                        text = if (cellVal.isEmpty()) "(empty cell - tap to edit)" else cellVal,
+                                        text = if (cellVal.isEmpty()) (if (isBanner) "(empty banner - tap to edit)" else "(empty cell - tap to edit)") else cellVal,
                                         fontWeight = FontWeight.Medium,
                                         color = if (cellVal.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
                                         fontSize = 12.sp,
@@ -2610,12 +2650,14 @@ fun SpreadsheetScreen(
                             }
                             val deleteMode = settings.deleteMode
                             val deleteIcon = when (deleteMode) {
-                                DeleteMode.CLEAR_CELL -> Icons.Default.Delete
+                                DeleteMode.CLEAR_TEXT -> Icons.Default.Delete
+                                DeleteMode.CLEAR_FORMATTING -> Icons.Default.Clear
                                 DeleteMode.CLEAR_ROW -> Icons.Default.DeleteSweep
                                 DeleteMode.CLEAR_COLUMN -> Icons.Default.DeleteOutline
                             }
                             val deleteDesc = when (deleteMode) {
-                                DeleteMode.CLEAR_CELL -> "Clear Cell"
+                                DeleteMode.CLEAR_TEXT -> "Clear Text"
+                                DeleteMode.CLEAR_FORMATTING -> "Clear Formatting"
                                 DeleteMode.CLEAR_ROW -> "Clear Row"
                                 DeleteMode.CLEAR_COLUMN -> "Clear Column"
                             }
@@ -2627,7 +2669,8 @@ fun SpreadsheetScreen(
                                     .combinedClickable(
                                         onClick = {
                                             when (deleteMode) {
-                                                DeleteMode.CLEAR_CELL -> viewModel.deleteCell(curRow, curCol)
+                                                DeleteMode.CLEAR_TEXT -> viewModel.clearCellText(curRow, curCol)
+                                                DeleteMode.CLEAR_FORMATTING -> viewModel.clearCellFormatting(curRow, curCol)
                                                 DeleteMode.CLEAR_ROW -> clearRowConfirm = curRow
                                                 DeleteMode.CLEAR_COLUMN -> clearColConfirm = curCol
                                             }
@@ -2781,41 +2824,82 @@ fun SpreadsheetScreen(
                             var longPressTriggered = false
                             var previousPointerCount = 1
 
-                            var longPressJob: Job? = coroutineScope.launch {
-                                delay(viewConfiguration.longPressTimeoutMillis)
-                                if (!isDragging && !isMultiTouch && !longPressTriggered) {
-                                    longPressTriggered = true
-                                    val headerW = if (showRowNumbers) 44f * density else 0f
-                                    val headerH = 32f * density
-                                    val headerTouchH = headerH + 10f * density
-                                    val screenX = startPos.x
-                                    val screenY = startPos.y
-                                    val curPan = animPanOffset.value
+                            val headerW = if (showRowNumbers) 44f * density else 0f
+                            val headerH = 32f * density
+                            val headerTouchH = headerH + 10f * density
+                            val curPan = animPanOffset.value
 
-                                    if (screenX >= headerW && screenY <= headerTouchH) {
-                                        val gridX = (screenX - headerW - curPan.x) / userZoom
-                                        val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
-                                        selectedCell = Pair(0, c)
-                                        showColumnMenu = c
-                                        triggerHaptic()
-                                    } else if (screenX >= headerW && screenY > headerTouchH) {
-                                        val gridX = (screenX - headerW - curPan.x) / userZoom
-                                        val gridY = (screenY - headerH - curPan.y) / userZoom
-                                        val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                        val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
-                                        selectedCell = Pair(r, c)
-                                        showMenuForCell = Pair(r, c)
-                                        triggerHaptic()
-                                    } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
-                                        val gridY = (screenY - headerH - curPan.y) / userZoom
-                                        val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                        val currentC = selectedCell?.second ?: 0
-                                        selectedCell = Pair(r, currentC)
-                                        showRowMenu = r
-                                        triggerHaptic()
+                            var grabbedCol: Int? = null
+                            var grabbedColInitW = 0f
+                            var grabbedRow: Int? = null
+                            var grabbedRowInitH = 0f
+
+                            // Detect touch on column resize handle (touch target at least 48dp: ±24dp around boundary)
+                            if (startPos.y <= headerTouchH && startPos.x >= headerW) {
+                                val visibleLeftUnscaled = -curPan.x / userZoom
+                                val startCol = engine.getColAt(visibleLeftUnscaled).coerceIn(0, engine.maxCol - 1)
+                                for (c in startCol until minOf(engine.maxCol, startCol + 25)) {
+                                    val colLeft = headerW + curPan.x + engine.getColOffsetPx(c) * userZoom
+                                    val colWidth = engine.getColWidthPx(c) * userZoom
+                                    val colRight = colLeft + colWidth
+                                    if (kotlin.math.abs(startPos.x - colRight) <= 24f * density) {
+                                        grabbedCol = c
+                                        grabbedColInitW = engine.getColWidthDp(c)
+                                        activeColResizeDrag = c
+                                        activeColResizeWidthDp = grabbedColInitW
+                                        break
+                                    }
+                                }
+                            } else if (showRowNumbers && startPos.x <= headerW + 10f * density && startPos.y >= headerH) {
+                                val visibleTopUnscaled = -curPan.y / userZoom
+                                val startRow = engine.getRowAt(visibleTopUnscaled).coerceIn(0, engine.maxRow - 1)
+                                for (r in startRow until minOf(engine.maxRow, startRow + 35)) {
+                                    val rowTop = headerH + curPan.y + engine.getRowOffsetPx(r) * userZoom
+                                    val rowHeight = engine.getRowHeightPx(r) * userZoom
+                                    val rowBottom = rowTop + rowHeight
+                                    if (kotlin.math.abs(startPos.y - rowBottom) <= 24f * density) {
+                                        grabbedRow = r
+                                        grabbedRowInitH = engine.getRowHeightDp(r)
+                                        activeRowResizeDrag = r
+                                        activeRowResizeHeightDp = grabbedRowInitH
+                                        break
                                     }
                                 }
                             }
+
+                            var longPressJob: Job? = if (grabbedCol == null && grabbedRow == null) {
+                                coroutineScope.launch {
+                                    delay(viewConfiguration.longPressTimeoutMillis)
+                                    if (!isDragging && !isMultiTouch && !longPressTriggered) {
+                                        longPressTriggered = true
+                                        val screenX = startPos.x
+                                        val screenY = startPos.y
+
+                                        if (screenX >= headerW && screenY <= headerTouchH) {
+                                            val gridX = (screenX - headerW - curPan.x) / userZoom
+                                            val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                            selectedCell = Pair(0, c)
+                                            showColumnMenu = c
+                                            triggerHaptic()
+                                        } else if (screenX >= headerW && screenY > headerTouchH) {
+                                            val gridX = (screenX - headerW - curPan.x) / userZoom
+                                            val gridY = (screenY - headerH - curPan.y) / userZoom
+                                            val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                            val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                            selectedCell = Pair(r, c)
+                                            showMenuForCell = Pair(r, c)
+                                            triggerHaptic()
+                                        } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
+                                            val gridY = (screenY - headerH - curPan.y) / userZoom
+                                            val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
+                                            val currentC = selectedCell?.second ?: 0
+                                            selectedCell = Pair(r, currentC)
+                                            showRowMenu = r
+                                            triggerHaptic()
+                                        }
+                                    }
+                                }
+                            } else null
 
                             // Light smoothing state for centroid & zoom
                             var smoothedCentroid: Offset? = null
@@ -2830,6 +2914,14 @@ fun SpreadsheetScreen(
                                     longPressJob?.cancel()
                                     isMultiTouch = true
                                     scrollJob?.cancel()
+                                    if (grabbedCol != null) {
+                                        activeColResizeDrag = null
+                                        grabbedCol = null
+                                    }
+                                    if (grabbedRow != null) {
+                                        activeRowResizeDrag = null
+                                        grabbedRow = null
+                                    }
 
                                     val rawCentroid = event.calculateCentroid(useCurrent = true)
                                     val rawZoom = event.calculateZoom()
@@ -2873,10 +2965,21 @@ fun SpreadsheetScreen(
                                 } else if (count == 1) {
                                     val pointer = activePointers[0]
 
-                                    // On a 2 -> 1 finger transition (one finger lifted mid-pinch),
-                                    // reset lastPos and startPos cleanly on this frame instead of treating the previous
-                                    // centroid as a new drag start — preventing the automatic zoom-out/jump glitch.
-                                    if (previousPointerCount >= 2) {
+                                    if (grabbedCol != null) {
+                                        longPressJob?.cancel()
+                                        val deltaPx = pointer.position.x - startPos.x
+                                        val deltaDp = deltaPx / (density * userZoom)
+                                        val newW = (grabbedColInitW + deltaDp).coerceIn(20f, 500f)
+                                        activeColResizeWidthDp = newW
+                                        pointer.consume()
+                                    } else if (grabbedRow != null) {
+                                        longPressJob?.cancel()
+                                        val deltaPx = pointer.position.y - startPos.y
+                                        val deltaDp = deltaPx / (density * userZoom)
+                                        val newH = (grabbedRowInitH + deltaDp).coerceIn(20f, 500f)
+                                        activeRowResizeHeightDp = newH
+                                        pointer.consume()
+                                    } else if (previousPointerCount >= 2) {
                                         longPressJob?.cancel()
                                         lastPos = pointer.position
                                         startPos = pointer.position
@@ -2961,7 +3064,15 @@ fun SpreadsheetScreen(
                                     val elapsed = now - downTime
                                     val wasLongPress = elapsed >= viewConfiguration.longPressTimeoutMillis
 
-                                    if (!isMultiTouch && !isDragging) {
+                                    if (grabbedCol != null) {
+                                        viewModel.setColumnWidth(grabbedCol!!, activeColResizeWidthDp)
+                                        activeColResizeDrag = null
+                                        grabbedCol = null
+                                    } else if (grabbedRow != null) {
+                                        viewModel.setRowHeight(grabbedRow!!, activeRowResizeHeightDp)
+                                        activeRowResizeDrag = null
+                                        grabbedRow = null
+                                    } else if (!isMultiTouch && !isDragging) {
                                         val headerW = if (showRowNumbers) 44f * density else 0f
                                         val headerH = 32f * density
                                         val headerTouchH = headerH + 10f * density
@@ -3022,17 +3133,18 @@ fun SpreadsheetScreen(
                                                 val gridY = (screenY - headerH - curPan.y) / userZoom
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                                 val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                val targetC = if (engine.isBannerRow(r)) 0 else c
 
                                                 if (isDoubleTap) {
                                                     // Keep double-tap strictly for editing cell — do NOT double-tap-to-zoom
                                                     lastTapTimestamp = 0L
-                                                    selectedCell = Pair(r, c)
-                                                    editingCell = Pair(r, c)
+                                                    selectedCell = Pair(r, targetC)
+                                                    editingCell = Pair(r, targetC)
                                                 } else {
                                                     lastTapTimestamp = now
                                                     lastTapPosition = startPos
-                                                    selectedCell = Pair(r, c)
-                                                    viewModel.speakCell(r, c)
+                                                    selectedCell = Pair(r, targetC)
+                                                    viewModel.speakCell(r, targetC)
                                                     triggerHaptic()
                                                 }
                                             } else if (screenX < headerW && screenY > headerH) {
@@ -3134,7 +3246,9 @@ fun SpreadsheetScreen(
                                     style = Stroke(width = 1f * density)
                                 )
 
-                                val text = engine.getCellValue(r, 0)
+                                val text = engine.getCellValue(r, 0).ifEmpty {
+                                    (0 until engine.maxCol).firstNotNullOfOrNull { col -> engine.getCellValue(r, col).takeIf { it.isNotEmpty() } } ?: ""
+                                }
                                 if (text.isNotEmpty()) {
                                     clipRect(
                                         left = bannerLeft + pad,
@@ -3439,6 +3553,18 @@ fun SpreadsheetScreen(
                             style = Stroke(width = 1f * density)
                         )
 
+                        // Draggable resize handle on right edge of Column Header
+                        val handleH = 16f * density
+                        val handleW = 3f * density
+                        val handleX = colRight - handleW / 2
+                        val handleY = (headerH - handleH) / 2
+                        drawRoundRect(
+                            color = if (activeColResizeDrag == hc) themeAccentColor else Color.LightGray.copy(alpha = 0.65f),
+                            topLeft = Offset(handleX, handleY),
+                            size = Size(handleW, handleH),
+                            cornerRadius = CornerRadius(1.5f * density, 1.5f * density)
+                        )
+
                         clipRect(
                             left = maxOf(headerW, colLeft),
                             top = 0f,
@@ -3524,6 +3650,18 @@ fun SpreadsheetScreen(
                                 style = Stroke(width = 1f * density)
                             )
 
+                            // Draggable resize handle on bottom edge of Row Header
+                            val handleW = 16f * density
+                            val handleH = 3f * density
+                            val handleX = (headerW - handleW) / 2
+                            val handleY = rowBottom - handleH / 2
+                            drawRoundRect(
+                                color = if (activeRowResizeDrag == hr) themeAccentColor else Color.LightGray.copy(alpha = 0.65f),
+                                topLeft = Offset(handleX, handleY),
+                                size = Size(handleW, handleH),
+                                cornerRadius = CornerRadius(1.5f * density, 1.5f * density)
+                            )
+
                             val textLayout = cellLayoutCache.getRowHeaderLayout(
                                 r = hr,
                                 label = rowName,
@@ -3563,6 +3701,105 @@ fun SpreadsheetScreen(
                         style = Stroke(width = 1f * density)
                     )
                 }
+
+                // --- 5. Visual Drag Overlay & Tooltip while resizing ---
+                if (activeColResizeDrag != null) {
+                    val hc = activeColResizeDrag!!
+                    val colLeft = headerW + panOffset.x + engine.getColOffsetPx(hc) * userZoom
+                    val dragLineX = colLeft + activeColResizeWidthDp * density * userZoom
+
+                    drawLine(
+                        color = themeAccentColor,
+                        start = Offset(dragLineX, 0f),
+                        end = Offset(dragLineX, size.height),
+                        strokeWidth = 2.5f * density,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f * density, 6f * density), 0f)
+                    )
+
+                    val tooltipText = "Col ${engine.getColumnName(hc)}: ${activeColResizeWidthDp.roundToInt()} dp"
+                    val tooltipLayout = textMeasurer.measure(
+                        text = tooltipText,
+                        style = androidx.compose.ui.text.TextStyle(
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    val badgeW = (tooltipLayout.size.width + 18f * density)
+                    val badgeH = 26f * density
+                    val badgeX = (dragLineX - badgeW / 2).coerceIn(headerW + 4f * density, size.width - badgeW - 4f * density)
+                    val badgeY = headerH + 8f * density
+
+                    drawRoundRect(
+                        color = Color(0xFF1E293B),
+                        topLeft = Offset(badgeX, badgeY),
+                        size = Size(badgeW, badgeH),
+                        cornerRadius = CornerRadius(6f * density, 6f * density)
+                    )
+                    drawRoundRect(
+                        color = themeAccentColor,
+                        topLeft = Offset(badgeX, badgeY),
+                        size = Size(badgeW, badgeH),
+                        cornerRadius = CornerRadius(6f * density, 6f * density),
+                        style = Stroke(width = 1.5f * density)
+                    )
+                    drawText(
+                        textLayoutResult = tooltipLayout,
+                        topLeft = Offset(
+                            badgeX + (badgeW - tooltipLayout.size.width) / 2,
+                            badgeY + (badgeH - tooltipLayout.size.height) / 2
+                        )
+                    )
+                }
+
+                if (activeRowResizeDrag != null) {
+                    val hr = activeRowResizeDrag!!
+                    val rowTop = headerH + panOffset.y + engine.getRowOffsetPx(hr) * userZoom
+                    val dragLineY = rowTop + activeRowResizeHeightDp * density * userZoom
+
+                    drawLine(
+                        color = themeAccentColor,
+                        start = Offset(0f, dragLineY),
+                        end = Offset(size.width, dragLineY),
+                        strokeWidth = 2.5f * density,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f * density, 6f * density), 0f)
+                    )
+
+                    val tooltipText = "Row ${hr + 1}: ${activeRowResizeHeightDp.roundToInt()} dp"
+                    val tooltipLayout = textMeasurer.measure(
+                        text = tooltipText,
+                        style = androidx.compose.ui.text.TextStyle(
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    val badgeW = (tooltipLayout.size.width + 18f * density)
+                    val badgeH = 26f * density
+                    val badgeX = headerW + 8f * density
+                    val badgeY = (dragLineY - badgeH / 2).coerceIn(headerH + 4f * density, size.height - badgeH - 4f * density)
+
+                    drawRoundRect(
+                        color = Color(0xFF1E293B),
+                        topLeft = Offset(badgeX, badgeY),
+                        size = Size(badgeW, badgeH),
+                        cornerRadius = CornerRadius(6f * density, 6f * density)
+                    )
+                    drawRoundRect(
+                        color = themeAccentColor,
+                        topLeft = Offset(badgeX, badgeY),
+                        size = Size(badgeW, badgeH),
+                        cornerRadius = CornerRadius(6f * density, 6f * density),
+                        style = Stroke(width = 1.5f * density)
+                    )
+                    drawText(
+                        textLayoutResult = tooltipLayout,
+                        topLeft = Offset(
+                            badgeX + (badgeW - tooltipLayout.size.width) / 2,
+                            badgeY + (badgeH - tooltipLayout.size.height) / 2
+                        )
+                    )
+                }
             }
         }
     }
@@ -3576,8 +3813,11 @@ fun SpreadsheetScreen(
         var isFormulaExpanded by remember(r, c) {
             mutableStateOf(formulaOrValue.startsWith("="))
         }
+        val isBanner = engine.isBannerRow(r)
         val headerName = engine.getColumnHeaderName(c, r)
-        val cellTitle = if (r > 0 && headerName.isNotEmpty() && !headerName.startsWith("Column ")) {
+        val cellTitle = if (isBanner) {
+            "Edit Banner Row ${r + 1}"
+        } else if (r > 0 && headerName.isNotEmpty() && !headerName.startsWith("Column ")) {
             "Edit ${engine.getColumnName(c)}${r + 1} ($headerName)"
         } else {
             "Edit ${engine.getColumnName(c)}${r + 1}"
@@ -3951,7 +4191,8 @@ fun SpreadsheetScreen(
             text = {
                 Column {
                     listOf(
-                        DeleteMode.CLEAR_CELL to "Clear cell",
+                        DeleteMode.CLEAR_TEXT to "Clear text",
+                        DeleteMode.CLEAR_FORMATTING to "Clear formatting",
                         DeleteMode.CLEAR_ROW to "Clear row",
                         DeleteMode.CLEAR_COLUMN to "Clear column"
                     ).forEach { (mode, label) ->
@@ -4724,6 +4965,183 @@ fun SpreadsheetScreen(
             settings = settings
         )
     }
+
+    showResizeColumnDialog?.let { col ->
+        val currentWidth = engine.getColWidthDp(col)
+        ResizeDimensionDialog(
+            title = "Resize Column ${engine.getColumnName(col)}",
+            dimensionName = "Column Width",
+            initialValueDp = currentWidth,
+            presets = listOf(40, 60, 85, 120, 160, 220, 300),
+            themeColor = themeAccentColor,
+            onConfirm = { newW ->
+                viewModel.setColumnWidth(col, newW)
+                showResizeColumnDialog = null
+            },
+            onDismiss = { showResizeColumnDialog = null }
+        )
+    }
+
+    showResizeRowDialog?.let { row ->
+        val currentHeight = engine.getRowHeightDp(row)
+        ResizeDimensionDialog(
+            title = "Resize Row ${row + 1}",
+            dimensionName = "Row Height",
+            initialValueDp = currentHeight,
+            presets = listOf(28, 36, 44, 60, 80, 120, 180),
+            themeColor = themeAccentColor,
+            onConfirm = { newH ->
+                viewModel.setRowHeight(row, newH)
+                showResizeRowDialog = null
+            },
+            onDismiss = { showResizeRowDialog = null }
+        )
+    }
+}
+
+@Composable
+fun ResizeDimensionDialog(
+    title: String,
+    dimensionName: String,
+    initialValueDp: Float,
+    minValueDp: Float = 20f,
+    maxValueDp: Float = 500f,
+    presets: List<Int>,
+    themeColor: Color,
+    onConfirm: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var sliderValue by remember { mutableFloatStateOf(initialValueDp.coerceIn(minValueDp, maxValueDp)) }
+    var textValue by remember { mutableStateOf(sliderValue.roundToInt().toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = if (dimensionName.contains("Column", ignoreCase = true) || dimensionName.contains("Width", ignoreCase = true)) Icons.Default.WidthNormal else Icons.Default.Height,
+                contentDescription = null,
+                tint = themeColor,
+                modifier = Modifier.size(32.dp)
+            )
+        },
+        title = {
+            Text(title, fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = textValue,
+                    onValueChange = { input ->
+                        val digits = input.filter { it.isDigit() }
+                        textValue = digits
+                        digits.toFloatOrNull()?.let { num ->
+                            sliderValue = num.coerceIn(minValueDp, maxValueDp)
+                        }
+                    },
+                    label = { Text("$dimensionName (20 - 500 dp)") },
+                    suffix = { Text("dp") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth().testTag("resize_text_input")
+                )
+
+                // Visual Slider with Two-Way Binding
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Visual Drag",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "${sliderValue.roundToInt()} dp",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = themeColor
+                        )
+                    }
+
+                    Slider(
+                        value = sliderValue,
+                        onValueChange = { newVal ->
+                            sliderValue = newVal
+                            textValue = newVal.roundToInt().toString()
+                        },
+                        valueRange = minValueDp..maxValueDp,
+                        colors = SliderDefaults.colors(
+                            thumbColor = themeColor,
+                            activeTrackColor = themeColor
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("resize_slider")
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("${minValueDp.toInt()} dp", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                        Text("${maxValueDp.toInt()} dp", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    }
+                }
+
+                // Quick Preset Chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    presets.forEach { preset ->
+                        val isSelected = sliderValue.roundToInt() == preset
+                        AssistChip(
+                            onClick = {
+                                sliderValue = preset.toFloat()
+                                textValue = preset.toString()
+                            },
+                            label = { Text("${preset} dp", fontSize = 12.sp) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = if (isSelected) themeColor.copy(alpha = 0.15f) else Color.Transparent
+                            ),
+                            border = AssistChipDefaults.assistChipBorder(
+                                enabled = true,
+                                borderColor = if (isSelected) themeColor else MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalVal = textValue.toFloatOrNull()?.coerceIn(minValueDp, maxValueDp) ?: sliderValue
+                    onConfirm(finalVal)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                modifier = Modifier.testTag("resize_apply_button")
+            ) {
+                Text("Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("resize_cancel_button")
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 data class ColorSwatch(val name: String, val colorInt: Int)
@@ -4984,8 +5402,8 @@ fun UnifiedColorPickerDialog(
                     val satBrush = remember {
                         Brush.verticalGradient(
                             listOf(
-                                Color.White,
-                                Color.Transparent
+                                Color.Transparent,
+                                Color.White
                             )
                         )
                     }
