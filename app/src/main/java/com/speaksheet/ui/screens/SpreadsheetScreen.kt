@@ -431,6 +431,7 @@ fun executeSpreadsheetAction(
     settings: com.speaksheet.data.AppSettings,
     context: Context,
     selectedColumn: Int? = null,
+    selectedRow: Int? = null,
     onDismiss: () -> Unit = {},
     onEditCell: (Pair<Int, Int>, String?) -> Unit,
     onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
@@ -453,11 +454,13 @@ fun executeSpreadsheetAction(
         }
         "resize_row" -> {
             onDismiss()
-            onOpenResizeRow(r)
+            onOpenResizeRow(selectedRow ?: r)
         }
         "copy" -> {
             if (selectedColumn != null) {
                 viewModel.copyColumn(context, selectedColumn)
+            } else if (selectedRow != null) {
+                viewModel.copyRow(context, selectedRow)
             } else {
                 viewModel.copyCell(context, r, c)
             }
@@ -465,6 +468,8 @@ fun executeSpreadsheetAction(
         "paste" -> {
             if (selectedColumn != null) {
                 viewModel.pasteColumn(context, selectedColumn, startRow = 0)
+            } else if (selectedRow != null) {
+                viewModel.pasteRow(context, selectedRow, startCol = 0)
             } else {
                 viewModel.pasteCell(context, r, c)
             }
@@ -760,6 +765,7 @@ fun ActionMenuSheet(
     settings: com.speaksheet.data.AppSettings,
     coroutineScope: kotlinx.coroutines.CoroutineScope,
     selectedColumn: Int? = null,
+    selectedRow: Int? = null,
     onEditCell: (Pair<Int, Int>, String?) -> Unit,
     onOpenColorPicker: (ColorTarget, ColorPickerTab) -> Unit,
     onOpenZoom: () -> Unit,
@@ -1029,6 +1035,7 @@ fun ActionMenuSheet(
                                                                         settings = settings,
                                                                         context = context,
                                                                         selectedColumn = selectedColumn,
+                                                                        selectedRow = selectedRow,
                                                                         onDismiss = onDismiss,
                                                                         onEditCell = onEditCell,
                                                                         onOpenColorPicker = onOpenColorPicker,
@@ -1055,6 +1062,7 @@ fun ActionMenuSheet(
                                                                     settings = settings,
                                                                     context = context,
                                                                     selectedColumn = selectedColumn,
+                                                                    selectedRow = selectedRow,
                                                                     onDismiss = onDismiss,
                                                                     onEditCell = onEditCell,
                                                                     onOpenColorPicker = onOpenColorPicker,
@@ -1186,6 +1194,7 @@ fun ActionMenuSheet(
                                                     settings = settings,
                                                     context = context,
                                                     selectedColumn = selectedColumn,
+                                                    selectedRow = selectedRow,
                                                     onDismiss = onDismiss,
                                                     onEditCell = onEditCell,
                                                     onOpenColorPicker = onOpenColorPicker,
@@ -1212,6 +1221,7 @@ fun ActionMenuSheet(
                                                 settings = settings,
                                                 context = context,
                                                 selectedColumn = selectedColumn,
+                                                selectedRow = selectedRow,
                                                 onDismiss = onDismiss,
                                                 onEditCell = onEditCell,
                                                 onOpenColorPicker = onOpenColorPicker,
@@ -1539,6 +1549,7 @@ fun SpreadsheetScreen(
     
     var selectedCell by remember { mutableStateOf<Pair<Int, Int>?>(Pair(0, 0)) }
     var selectedColumn by remember { mutableStateOf<Int?>(null) }
+    var selectedRow by remember { mutableStateOf<Int?>(null) }
     var editingCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showMenuForCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showActionMenuSheet by remember { mutableStateOf(false) }
@@ -1695,6 +1706,7 @@ fun SpreadsheetScreen(
     LaunchedEffect(currentFileUri, fileName) {
         selectedCell = Pair(0, 0)
         selectedColumn = null
+        selectedRow = null
         editingCell = null
         userZoom = 1.0f
         animPanOffset.snapTo(Offset.Zero)
@@ -1904,6 +1916,7 @@ fun SpreadsheetScreen(
     // Smooth navigation with clear landing feedback mapped to current scale & offset
     fun moveSelection(deltaRow: Int, deltaCol: Int) {
         selectedColumn = null
+        selectedRow = null
         val current = selectedCell ?: Pair(0, 0)
         val newR = (current.first + deltaRow).coerceIn(0, engine.maxRow - 1)
         var newC = (current.second + deltaCol).coerceIn(0, engine.maxCol - 1)
@@ -2176,6 +2189,7 @@ fun SpreadsheetScreen(
                                                     settings = settings,
                                                     context = context,
                                                     selectedColumn = selectedColumn,
+                                                    selectedRow = selectedRow,
                                                     onDismiss = { showOptionsMenu = false },
                                                     onEditCell = { cellPair, initialFormula ->
                                                         editingCell = cellPair
@@ -2766,6 +2780,8 @@ fun SpreadsheetScreen(
                                 onClick = {
                                     if (selectedColumn != null) {
                                         viewModel.copyColumn(context, selectedColumn!!)
+                                    } else if (selectedRow != null) {
+                                        viewModel.copyRow(context, selectedRow!!)
                                     } else {
                                         viewModel.copyCell(context, curRow, curCol)
                                     }
@@ -2778,6 +2794,8 @@ fun SpreadsheetScreen(
                                 onClick = {
                                     if (selectedColumn != null) {
                                         viewModel.pasteColumn(context, selectedColumn!!, startRow = 0)
+                                    } else if (selectedRow != null) {
+                                        viewModel.pasteRow(context, selectedRow!!, startCol = 0)
                                     } else {
                                         viewModel.pasteCell(context, curRow, curCol)
                                     }
@@ -3016,8 +3034,10 @@ fun SpreadsheetScreen(
                                         if (screenX >= headerW && screenY <= headerTouchH) {
                                             val gridX = (screenX - headerW - curPan.x) / userZoom
                                             val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                            selectedColumn = c
+                                            selectedRow = null
                                             selectedCell = Pair(0, c)
-                                            showColumnMenu = c
+                                            viewModel.speak("Column ${engine.getColumnName(c)} selected")
                                             triggerHaptic()
                                         } else if (screenX >= headerW && screenY > headerTouchH) {
                                             val gridX = (screenX - headerW - curPan.x) / userZoom
@@ -3025,6 +3045,8 @@ fun SpreadsheetScreen(
                                             val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                             val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
                                             selectedCell = Pair(r, c)
+                                            selectedColumn = null
+                                            selectedRow = null
                                             val cellVal = engine.getCellValue(r, c)
                                             if (cellVal.startsWith("#")) {
                                                 cellErrorPopup = Pair(Pair(r, c), cellVal)
@@ -3035,9 +3057,10 @@ fun SpreadsheetScreen(
                                         } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
                                             val gridY = (screenY - headerH - curPan.y) / userZoom
                                             val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                            val currentC = selectedCell?.second ?: 0
-                                            selectedCell = Pair(r, currentC)
-                                            showRowMenu = r
+                                            selectedRow = r
+                                            selectedColumn = null
+                                            selectedCell = Pair(r, 0)
+                                            viewModel.speak("Row ${r + 1} selected")
                                             triggerHaptic()
                                         }
                                     }
@@ -3296,18 +3319,22 @@ fun SpreadsheetScreen(
                                                 }
                                             } else if (screenX < headerW && screenY > headerH) {
                                                 // Tapped row header
-                                                selectedColumn = null
                                                 val gridY = (screenY - headerH - curPan.y) / userZoom
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                                val currentC = selectedCell?.second ?: 0
-                                                selectedCell = Pair(r, currentC)
                                                 if (isDoubleTap) {
                                                     lastTapTimestamp = 0L
-                                                    showRowMenu = r
+                                                    selectedRow = r
+                                                    selectedColumn = null
+                                                    selectedCell = Pair(r, 0)
+                                                    viewModel.speak("Row ${r + 1} selected")
                                                     triggerHaptic()
                                                 } else {
                                                     lastTapTimestamp = now
                                                     lastTapPosition = startPos
+                                                    selectedColumn = null
+                                                    selectedRow = null
+                                                    val currentC = selectedCell?.second ?: 0
+                                                    selectedCell = Pair(r, currentC)
                                                     viewModel.speakRow(r)
                                                     triggerHaptic()
                                                 }
@@ -3512,8 +3539,8 @@ fun SpreadsheetScreen(
                                     )
                                 }
 
-                                // Cell / Column Selection Highlight (Overlay stays visible on top)
-                                if (isSelected || selectedColumn == c) {
+                                // Cell / Column / Row Selection Highlight (Overlay stays visible on top)
+                                if (isSelected || selectedColumn == c || selectedRow == r) {
                                     drawRect(
                                         color = highlightFill,
                                         topLeft = Offset(colLeft, rowTop),
@@ -3773,21 +3800,35 @@ fun SpreadsheetScreen(
                             }
 
                             val rowName = "${hr + 1}"
-                            val isRowSelected = selectedCell?.first == hr
+                            val isRowFullySelected = selectedRow == hr
+                            val isRowSelected = selectedCell?.first == hr || isRowFullySelected
                             val headerColor = if (isRowSelected) themeAccentColor else headerStyle.color
 
-                            val rowColorInt = engine.getRowColor(hr)
-                            if (rowColorInt != null) {
+                            if (isRowFullySelected) {
                                 drawRect(
-                                    color = Color(rowColorInt).copy(alpha = 0.35f),
+                                    color = selectedCellColor.copy(alpha = 0.35f),
                                     topLeft = Offset(0f, rowTop),
                                     size = Size(headerW, rowHeight)
                                 )
                                 drawRect(
-                                    color = Color(rowColorInt),
+                                    color = selectedCellColor,
                                     topLeft = Offset(headerW - 3.5f * density, rowTop),
                                     size = Size(3.5f * density, rowHeight)
                                 )
+                            } else {
+                                val rowColorInt = engine.getRowColor(hr)
+                                if (rowColorInt != null) {
+                                    drawRect(
+                                        color = Color(rowColorInt).copy(alpha = 0.35f),
+                                        topLeft = Offset(0f, rowTop),
+                                        size = Size(headerW, rowHeight)
+                                    )
+                                    drawRect(
+                                        color = Color(rowColorInt),
+                                        topLeft = Offset(headerW - 3.5f * density, rowTop),
+                                        size = Size(3.5f * density, rowHeight)
+                                    )
+                                }
                             }
 
                             drawRect(
@@ -5034,6 +5075,7 @@ fun SpreadsheetScreen(
             settings = settings,
             coroutineScope = coroutineScope,
             selectedColumn = selectedColumn,
+            selectedRow = selectedRow,
             onEditCell = { cellPair, initialFormula ->
                 editingCell = cellPair
                 if (initialFormula != null) {

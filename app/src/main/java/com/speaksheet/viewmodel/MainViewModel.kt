@@ -1078,6 +1078,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsManager.speak("Copied entire $headerName, ${trimmedValues.size} rows")
     }
 
+    fun copyRow(context: android.content.Context, row: Int) {
+        val values = (0 until spreadsheetEngine.maxCol).map { c ->
+            spreadsheetEngine.getCellFormulaOrValue(row, c)
+        }
+        val lastNonEmpty = values.indexOfLast { it.isNotEmpty() }
+        val trimmedValues = if (lastNonEmpty >= 0) values.subList(0, lastNonEmpty + 1) else emptyList()
+        val clipText = trimmedValues.joinToString("\t")
+
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val clip = android.content.ClipData.newPlainText("Row Content", clipText)
+        clipboard?.setPrimaryClip(clip)
+
+        ttsManager.speak("Copied entire Row ${row + 1}, ${trimmedValues.size} cells")
+    }
+
+    fun pasteRow(context: android.content.Context, targetRow: Int, startCol: Int = 0) {
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val item = clipboard?.primaryClip?.getItemAt(0)
+        val text = item?.text?.toString() ?: ""
+
+        if (text.isNotEmpty()) {
+            val delimiter = if (text.contains("\t")) "\t" else if (text.contains(",")) "," else "\n"
+            val tokens = text.split(delimiter)
+            spreadsheetEngine.pushUndo("Paste Row into Row ${targetRow + 1}")
+            for (i in tokens.indices) {
+                val targetC = startCol + i
+                if (targetC < spreadsheetEngine.maxCol) {
+                    spreadsheetEngine.setCell(targetRow, targetC, tokens[i].trim())
+                }
+            }
+            updateUndoRedoState()
+            _gridRefreshTrigger.value += 1
+            autoSaveCurrentFile()
+            ttsManager.speak("Pasted ${tokens.size} values into Row ${targetRow + 1}")
+        } else {
+            ttsManager.speak("Clipboard is empty")
+        }
+    }
+
     fun pasteColumn(context: android.content.Context, targetCol: Int, startRow: Int = 0) {
         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
         val item = clipboard?.primaryClip?.getItemAt(0)

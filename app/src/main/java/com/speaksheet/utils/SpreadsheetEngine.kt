@@ -567,7 +567,14 @@ class SpreadsheetEngine {
     }
 
     fun getCellValue(r: Int, c: Int): String {
+        if (r < 0 || c < 0) return ""
         val key = cellKey(r, c)
+        if (r >= maxRow || c >= maxCol) {
+            val cell = cells[key]
+            if (cell == null || cell.raw.isEmpty()) {
+                return spillOutputs[key] ?: ""
+            }
+        }
         val cell = cells[key]
         val rawVal = if (cell != null && cell.raw.isNotEmpty()) {
             if (!cell.raw.startsWith("=")) {
@@ -595,6 +602,7 @@ class SpreadsheetEngine {
     }
 
     fun getCellFormulaOrValue(r: Int, c: Int): String {
+        if (r < 0 || c < 0) return ""
         val targetC = if (isBannerRow(r)) 0 else c
         return cells[cellKey(r, targetC)]?.raw ?: ""
     }
@@ -1251,18 +1259,51 @@ class SpreadsheetEngine {
         }
     }
 
+    fun getLastUsedRow(): Int {
+        var lastR = -1
+        for ((key, cell) in cells) {
+            if (cell.raw.isNotEmpty()) {
+                val r = (key ushr 32).toInt()
+                if (r > lastR) lastR = r
+            }
+        }
+        for ((key, text) in spillOutputs) {
+            if (text.isNotEmpty()) {
+                val r = (key ushr 32).toInt()
+                if (r > lastR) lastR = r
+            }
+        }
+        return if (lastR >= 0) lastR else 0
+    }
+
+    fun getLastUsedCol(): Int {
+        var lastC = -1
+        for ((key, cell) in cells) {
+            if (cell.raw.isNotEmpty()) {
+                val c = (key and 0xFFFFFFFFL).toInt()
+                if (c > lastC) lastC = c
+            }
+        }
+        for ((key, text) in spillOutputs) {
+            if (text.isNotEmpty()) {
+                val c = (key and 0xFFFFFFFFL).toInt()
+                if (c > lastC) lastC = c
+            }
+        }
+        return if (lastC >= 0) lastC else 0
+    }
+
     fun parseRange(token: String): Pair<Pair<Int, Int>, Pair<Int, Int>>? {
         val parts = token.uppercase(Locale.ROOT).split(":")
         if (parts.size != 2) return null
-        val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return null
-        val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return null
+        val start = parseSingleCellRef(parts[0].trim(), defaultRow = 0) ?: return null
+        val isOpenEnded = parts[1].trim().none { it.isDigit() }
+        val defaultEndRow = if (isOpenEnded) maxOf(start.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+        val end = parseSingleCellRef(parts[1].trim(), defaultRow = defaultEndRow) ?: return null
         return Pair(start, end)
     }
 
-    private fun parseCellReference(ref: String, defaultRow: Int = -1): Pair<Int, Int>? {
-        if (ref.contains(":")) {
-            return null
-        }
+    private fun parseSingleCellRef(ref: String, defaultRow: Int = -1): Pair<Int, Int>? {
         var col = 0
         var rowStr = ""
         for (ch in ref.uppercase(Locale.ROOT)) {
@@ -1279,6 +1320,13 @@ class SpreadsheetEngine {
             rowStr.toIntOrNull() ?: return null
         }
         return Pair(row - 1, col - 1)
+    }
+
+    fun parseCellReference(ref: String, defaultRow: Int = -1): Pair<Int, Int>? {
+        if (ref.contains(":")) {
+            return parseRange(ref)?.first
+        }
+        return parseSingleCellRef(ref, defaultRow)
     }
 
     suspend fun saveToFile(file: File) = withContext(Dispatchers.IO) {
@@ -1947,7 +1995,9 @@ class SpreadsheetEngine {
         val parts = rangeStr.split(":")
         if (parts.size != 2) return emptyList()
         val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return emptyList()
-        val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return emptyList()
+        val isOpenEnded = parts[1].trim().none { it.isDigit() }
+        val defaultEndR = if (isOpenEnded) maxOf(start.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+        val end = parseCellReference(parts[1].trim(), defaultRow = defaultEndR) ?: return emptyList()
         val rMin = minOf(start.first, end.first)
         val rMax = maxOf(start.first, end.first)
         val cMin = minOf(start.second, end.second)
@@ -1979,7 +2029,9 @@ class SpreadsheetEngine {
         if (parts.size != 2) return emptyList()
 
         val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return emptyList()
-        val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return emptyList()
+        val isOpenEndedFilter = parts[1].trim().none { it.isDigit() }
+        val defaultEndRFilter = if (isOpenEndedFilter) maxOf(start.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+        val end = parseCellReference(parts[1].trim(), defaultRow = defaultEndRFilter) ?: return emptyList()
 
         val rMin = minOf(start.first, end.first)
         val rMax = maxOf(start.first, end.first)
@@ -2149,7 +2201,7 @@ class SpreadsheetEngine {
         if (args.isEmpty()) return "#VALUE!"
 
         val rowsData = getRowsDataForArgument(args[0], originR, originC)
-        if (rowsData.isEmpty()) return "#VALUE!"
+        if (rowsData.isEmpty()) return "#N/A"
 
         var sortCol = 1
         var isAscending = true
@@ -2400,8 +2452,10 @@ class SpreadsheetEngine {
     private fun evaluateRange(rangeStr: String): List<Double> {
         val parts = rangeStr.split(":")
         if (parts.size == 2) {
-            val start = parseCellReference(parts[0].trim()) ?: return emptyList()
-            val end = parseCellReference(parts[1].trim()) ?: return emptyList()
+            val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return emptyList()
+            val isOpen = parts[1].trim().none { it.isDigit() }
+            val dEnd = if (isOpen) maxOf(start.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+            val end = parseCellReference(parts[1].trim(), defaultRow = dEnd) ?: return emptyList()
             val rMin = minOf(start.first, end.first)
             val rMax = maxOf(start.first, end.first)
             val cMin = minOf(start.second, end.second)
@@ -3281,7 +3335,9 @@ class SpreadsheetEngine {
             if (trimmed.contains(":")) {
                 val p = trimmed.split(":")
                 val start = parseCellReference(p[0].trim(), defaultRow = 0)
-                val end = parseCellReference(p[1].trim(), defaultRow = maxOf(maxRow - 1, 0))
+                val isOpen = p[1].trim().none { it.isDigit() }
+                val dEnd = if (isOpen && start != null) maxOf(start.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+                val end = parseCellReference(p[1].trim(), defaultRow = dEnd)
                 if (start != null && end != null) {
                     val c = start.second
                     return (rMin..rMax).map { r ->
@@ -3305,14 +3361,18 @@ class SpreadsheetEngine {
         val leftRange = if (leftIsRange) {
             val p = left.split(":")
             val s = parseCellReference(p[0].trim(), defaultRow = 0)
-            val e = parseCellReference(p[1].trim(), defaultRow = maxOf(maxRow - 1, 0))
+            val isOpen = p[1].trim().none { it.isDigit() }
+            val dEnd = if (isOpen && s != null) maxOf(s.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+            val e = parseCellReference(p[1].trim(), defaultRow = dEnd)
             if (s != null && e != null) Pair(s, e) else null
         } else null
 
         val rightRange = if (rightIsRange) {
             val p = right.split(":")
             val s = parseCellReference(p[0].trim(), defaultRow = 0)
-            val e = parseCellReference(p[1].trim(), defaultRow = maxOf(maxRow - 1, 0))
+            val isOpen = p[1].trim().none { it.isDigit() }
+            val dEnd = if (isOpen && s != null) maxOf(s.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+            val e = parseCellReference(p[1].trim(), defaultRow = dEnd)
             if (s != null && e != null) Pair(s, e) else null
         } else null
 
@@ -3420,7 +3480,9 @@ class SpreadsheetEngine {
         val parts = rangeStr.uppercase(Locale.ROOT).split(":")
         if (parts.size == 2) {
             val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return emptyList()
-            val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return emptyList()
+            val isOpen = parts[1].trim().none { it.isDigit() }
+            val dEnd = if (isOpen) maxOf(start.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+            val end = parseCellReference(parts[1].trim(), defaultRow = dEnd) ?: return emptyList()
             val rMin = minOf(start.first, end.first)
             val rMax = maxOf(start.first, end.first)
             val cMin = minOf(start.second, end.second)
@@ -3444,8 +3506,10 @@ class SpreadsheetEngine {
         val colIndex = args[2].trim().toIntOrNull() ?: return "#VALUE!"
         val parts = rangeStr.split(":")
         if (parts.size != 2) return "#VALUE!"
-        val start = parseCellReference(parts[0].trim()) ?: return "#VALUE!"
-        val end = parseCellReference(parts[1].trim()) ?: return "#VALUE!"
+        val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return "#VALUE!"
+        val isOpen = parts[1].trim().none { it.isDigit() }
+        val dEnd = if (isOpen) maxOf(start.first, getLastUsedRow()) else maxOf(maxRow - 1, 0)
+        val end = parseCellReference(parts[1].trim(), defaultRow = dEnd) ?: return "#VALUE!"
         val rMin = minOf(start.first, end.first)
         val rMax = maxOf(start.first, end.first)
         val cMin = minOf(start.second, end.second)
