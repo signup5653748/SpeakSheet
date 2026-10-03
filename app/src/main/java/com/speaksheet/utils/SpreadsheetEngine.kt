@@ -567,38 +567,42 @@ class SpreadsheetEngine {
     }
 
     fun getCellValue(r: Int, c: Int): String {
-        if (r < 0 || c < 0) return ""
-        val key = cellKey(r, c)
-        if (r >= maxRow || c >= maxCol) {
-            val cell = cells[key]
-            if (cell == null || cell.raw.isEmpty()) {
-                return spillOutputs[key] ?: ""
+        try {
+            if (r < 0 || c < 0) return ""
+            val key = cellKey(r, c)
+            if (r >= maxRow || c >= maxCol) {
+                val cell = cells[key]
+                if (cell == null || cell.raw.isEmpty()) {
+                    return spillOutputs[key] ?: ""
+                }
             }
-        }
-        val cell = cells[key]
-        val rawVal = if (cell != null && cell.raw.isNotEmpty()) {
-            if (!cell.raw.startsWith("=")) {
-                cell.raw
-            } else {
-                cell.evaluated ?: run {
-                    if (!evaluatingCells.add(key)) {
-                        "#CIRCULAR!"
-                    } else {
-                        try {
-                            val eval = evaluateFormula(cell.raw, r, c)
-                            cell.evaluated = eval
-                            eval
-                        } finally {
-                            evaluatingCells.remove(key)
+            val cell = cells[key]
+            val rawVal = if (cell != null && cell.raw.isNotEmpty()) {
+                if (!cell.raw.startsWith("=")) {
+                    cell.raw
+                } else {
+                    cell.evaluated ?: run {
+                        if (!evaluatingCells.add(key)) {
+                            "#CIRCULAR!"
+                        } else {
+                            try {
+                                val eval = evaluateFormula(cell.raw, r, c)
+                                cell.evaluated = eval
+                                eval
+                            } finally {
+                                evaluatingCells.remove(key)
+                            }
                         }
                     }
                 }
+            } else {
+                spillOutputs[key] ?: ""
             }
-        } else {
-            spillOutputs[key] ?: ""
+            val fmt = getCellNumberFormat(r, c)
+            return if (fmt != "General") formatDisplayValue(rawVal, fmt) else rawVal
+        } catch (_: Throwable) {
+            return ""
         }
-        val fmt = getCellNumberFormat(r, c)
-        return if (fmt != "General") formatDisplayValue(rawVal, fmt) else rawVal
     }
 
     fun getCellFormulaOrValue(r: Int, c: Int): String {
@@ -1323,9 +1327,7 @@ class SpreadsheetEngine {
     }
 
     fun parseCellReference(ref: String, defaultRow: Int = -1): Pair<Int, Int>? {
-        if (ref.contains(":")) {
-            return parseRange(ref)?.first
-        }
+        if (ref.contains(":")) return null
         return parseSingleCellRef(ref, defaultRow)
     }
 
@@ -2471,6 +2473,8 @@ class SpreadsheetEngine {
             }
             return result
         }
+        val single = rangeStr.trim().removePrefix("$").removeSuffix("%").toDoubleOrNull()
+        if (single != null) return listOf(single)
         return emptyList()
     }
 

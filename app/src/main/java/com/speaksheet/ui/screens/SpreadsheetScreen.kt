@@ -17,6 +17,11 @@ import androidx.compose.foundation.lazy.items
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
@@ -150,6 +155,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -2824,11 +2830,17 @@ fun SpreadsheetScreen(
                                     .size(38.dp)
                                     .combinedClickable(
                                         onClick = {
-                                            when (deleteMode) {
-                                                DeleteMode.CLEAR_TEXT -> viewModel.clearCellText(curRow, curCol)
-                                                DeleteMode.CLEAR_FORMATTING -> viewModel.clearCellFormatting(curRow, curCol)
-                                                DeleteMode.CLEAR_ROW -> clearRowConfirm = curRow
-                                                DeleteMode.CLEAR_COLUMN -> clearColConfirm = curCol
+                                            if (selectedColumn != null) {
+                                                viewModel.clearColumn(selectedColumn!!)
+                                            } else if (selectedRow != null) {
+                                                viewModel.clearRow(selectedRow!!)
+                                            } else {
+                                                when (deleteMode) {
+                                                    DeleteMode.CLEAR_TEXT -> viewModel.clearCellText(curRow, curCol)
+                                                    DeleteMode.CLEAR_FORMATTING -> viewModel.clearCellFormatting(curRow, curCol)
+                                                    DeleteMode.CLEAR_ROW -> clearRowConfirm = curRow
+                                                    DeleteMode.CLEAR_COLUMN -> clearColConfirm = curCol
+                                                }
                                             }
                                         },
                                         onLongClick = { showDeleteModeChooser = true }
@@ -3199,23 +3211,28 @@ fun SpreadsheetScreen(
                                                 if (screenX >= headerW && screenY <= headerTouchH) {
                                                     val gridX = (screenX - headerW - curPan.x) / userZoom
                                                     val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                    selectedColumn = c
+                                                    selectedRow = null
                                                     selectedCell = Pair(0, c)
-                                                    showColumnMenu = c
+                                                    viewModel.speak("Column ${engine.getColumnName(c)} selected")
                                                     triggerHaptic()
                                                 } else if (screenX >= headerW && screenY > headerTouchH) {
                                                     val gridX = (screenX - headerW - curPan.x) / userZoom
                                                     val gridY = (screenY - headerH - curPan.y) / userZoom
                                                     val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                                     val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                    selectedColumn = null
+                                                    selectedRow = null
                                                     selectedCell = Pair(r, c)
                                                     showMenuForCell = Pair(r, c)
                                                     triggerHaptic()
-                                                } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
+                                                } else if (showRowNumbers && screenX < headerW && screenY > headerH) {
                                                     val gridY = (screenY - headerH - curPan.y) / userZoom
                                                     val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                                    val currentC = selectedCell?.second ?: 0
-                                                    selectedCell = Pair(r, currentC)
-                                                    showRowMenu = r
+                                                    selectedRow = r
+                                                    selectedColumn = null
+                                                    selectedCell = Pair(r, 0)
+                                                    viewModel.speak("Row ${r + 1} selected")
                                                     triggerHaptic()
                                                 }
                                                 pointer.consume()
@@ -3251,23 +3268,28 @@ fun SpreadsheetScreen(
                                             if (screenX >= headerW && screenY <= headerTouchH) {
                                                 val gridX = (screenX - headerW - curPan.x) / userZoom
                                                 val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                selectedColumn = c
+                                                selectedRow = null
                                                 selectedCell = Pair(0, c)
-                                                showColumnMenu = c
+                                                viewModel.speak("Column ${engine.getColumnName(c)} selected")
                                                 triggerHaptic()
                                             } else if (screenX >= headerW && screenY > headerTouchH) {
                                                 val gridX = (screenX - headerW - curPan.x) / userZoom
                                                 val gridY = (screenY - headerH - curPan.y) / userZoom
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                                 val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
+                                                selectedColumn = null
+                                                selectedRow = null
                                                 selectedCell = Pair(r, c)
                                                 showMenuForCell = Pair(r, c)
                                                 triggerHaptic()
-                                            } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
+                                            } else if (showRowNumbers && screenX < headerW && screenY > headerH) {
                                                 val gridY = (screenY - headerH - curPan.y) / userZoom
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
-                                                val currentC = selectedCell?.second ?: 0
-                                                selectedCell = Pair(r, currentC)
-                                                showRowMenu = r
+                                                selectedRow = r
+                                                selectedColumn = null
+                                                selectedCell = Pair(r, 0)
+                                                viewModel.speak("Row ${r + 1} selected")
                                                 triggerHaptic()
                                             }
                                         } else if (!longPressTriggered) {
@@ -3281,6 +3303,7 @@ fun SpreadsheetScreen(
                                                 if (isDoubleTap) {
                                                     lastTapTimestamp = 0L
                                                     selectedColumn = c
+                                                    selectedRow = null
                                                     selectedCell = Pair(0, c)
                                                     viewModel.speak("Column ${engine.getColumnName(c)} selected")
                                                     triggerHaptic()
@@ -3288,6 +3311,7 @@ fun SpreadsheetScreen(
                                                     lastTapTimestamp = now
                                                     lastTapPosition = startPos
                                                     selectedColumn = null
+                                                    selectedRow = null
                                                     selectedCell = Pair(0, c)
                                                     viewModel.speakColumn(c)
                                                     triggerHaptic()
@@ -3295,6 +3319,7 @@ fun SpreadsheetScreen(
                                             } else if (screenX >= headerW && screenY > headerTouchH) {
                                                 // Cell grid tapped
                                                 selectedColumn = null
+                                                selectedRow = null
                                                 val gridX = (screenX - headerW - curPan.x) / userZoom
                                                 val gridY = (screenY - headerH - curPan.y) / userZoom
                                                 val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
@@ -3987,6 +4012,152 @@ fun SpreadsheetScreen(
                             badgeY + (badgeH - tooltipLayout.size.height) / 2
                         )
                     )
+                }
+            }
+
+            // Floating Toolbar (Context Menu for full Column / Row selection, like Google Sheets)
+            if (selectedColumn != null || selectedRow != null) {
+                val headerW = if (showRowNumbers) 44f * density else 0f
+                val headerH = 32f * density
+                val curPan = animPanOffset.value
+
+                val (targetX, targetY) = if (selectedColumn != null) {
+                    val c = selectedColumn!!
+                    val colLeft = headerW + curPan.x + engine.getColOffsetPx(c) * userZoom
+                    val colW = engine.getColWidthPx(c) * userZoom
+                    val centerX = colLeft + colW / 2f
+                    val estToolbarW = 280f * density
+                    val clampedX = (centerX - estToolbarW / 2f).coerceIn(
+                        headerW + 8f * density,
+                        maxOf(headerW + 8f * density, viewportSize.width.toFloat() - estToolbarW - 8f * density)
+                    )
+                    val clampedY = (headerH + 8f * density).coerceIn(0f, maxOf(0f, viewportSize.height.toFloat() - 60f * density))
+                    Pair(clampedX, clampedY)
+                } else {
+                    val r = selectedRow!!
+                    val rowTop = headerH + curPan.y + engine.getRowOffsetPx(r) * userZoom
+                    val rowH = engine.getRowHeightPx(r) * userZoom
+                    val centerY = rowTop + rowH / 2f
+                    val estToolbarH = 48f * density
+                    val estToolbarW = 280f * density
+                    val clampedX = (headerW + 16f * density).coerceIn(
+                        headerW + 8f * density,
+                        maxOf(headerW + 8f * density, viewportSize.width.toFloat() - estToolbarW - 8f * density)
+                    )
+                    val clampedY = (centerY - estToolbarH / 2f).coerceIn(
+                        headerH + 8f * density,
+                        maxOf(headerH + 8f * density, viewportSize.height.toFloat() - estToolbarH - 8f * density)
+                    )
+                    Pair(clampedX, clampedY)
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    tonalElevation = 6.dp,
+                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .offset { IntOffset(targetX.roundToInt(), targetY.roundToInt()) }
+                        .testTag("floating_toolbar")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                triggerHaptic()
+                                if (selectedColumn != null) {
+                                    viewModel.copyColumn(context, selectedColumn!!)
+                                } else if (selectedRow != null) {
+                                    viewModel.copyRow(context, selectedRow!!)
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("floating_action_copy")
+                        ) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = "Copy",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Copy", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(20.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant)
+                        )
+
+                        TextButton(
+                            onClick = {
+                                triggerHaptic()
+                                if (selectedColumn != null) {
+                                    viewModel.pasteColumn(context, selectedColumn!!, startRow = 0)
+                                } else if (selectedRow != null) {
+                                    viewModel.pasteRow(context, selectedRow!!, startCol = 0)
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("floating_action_paste")
+                        ) {
+                            Icon(
+                                Icons.Default.ContentPaste,
+                                contentDescription = "Paste",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Paste", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(20.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant)
+                        )
+
+                        TextButton(
+                            onClick = {
+                                triggerHaptic()
+                                if (selectedColumn != null) {
+                                    viewModel.clearColumn(selectedColumn!!)
+                                } else if (selectedRow != null) {
+                                    viewModel.clearRow(selectedRow!!)
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("floating_action_delete")
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Delete",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Delete", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                        }
+
+                        IconButton(
+                            onClick = {
+                                selectedColumn = null
+                                selectedRow = null
+                            },
+                            modifier = Modifier.size(32.dp).testTag("floating_action_close")
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Close floating toolbar",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }

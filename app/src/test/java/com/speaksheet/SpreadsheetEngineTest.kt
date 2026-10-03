@@ -354,4 +354,41 @@ class SpreadsheetEngineTest {
         assertEquals("88", engine.getCellValue(5, 4))
         assertEquals("90", engine.getCellValue(6, 4))
     }
+
+    @Test
+    fun testDynamicRangeEvaluationOutOfBounds() {
+        val smallEngine = com.speaksheet.utils.SpreadsheetEngine()
+        smallEngine.maxRow = 15
+        smallEngine.maxCol = 5
+        smallEngine.setCell(0, 0, "Fruit")
+        smallEngine.setCell(1, 0, "Pear")
+        smallEngine.setCell(2, 0, "Apple")
+        smallEngine.setCell(3, 0, "Orange")
+
+        // Formula referencing range A2:A100 on a sheet with maxRow = 15
+        smallEngine.setCell(1, 1, """=SORT(FILTER(A2:A100, A2:A100<>""))""")
+        smallEngine.recalculateAllFormulas()
+
+        assertEquals("Apple", smallEngine.getCellValue(1, 1))
+        assertEquals("Orange", smallEngine.getCellValue(2, 1))
+        assertEquals("Pear", smallEngine.getCellValue(3, 1))
+        assertEquals("", smallEngine.getCellValue(4, 1))
+    }
+
+    @Test
+    fun testLastUsedRowAndCol() {
+        val testEngine = com.speaksheet.utils.SpreadsheetEngine()
+        testEngine.maxRow = 50
+        testEngine.maxCol = 26
+        assertEquals(0, testEngine.getLastUsedRow())
+        assertEquals(0, testEngine.getLastUsedCol())
+
+        testEngine.setCell(5, 3, "Hello")
+        assertEquals(5, testEngine.getLastUsedRow())
+        assertEquals(3, testEngine.getLastUsedCol())
+
+        testEngine.setCell(12, 1, "World")
+        assertEquals(12, testEngine.getLastUsedRow())
+        assertEquals(3, testEngine.getLastUsedCol())
+    }
 }

@@ -1084,7 +1084,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val lastNonEmpty = values.indexOfLast { it.isNotEmpty() }
         val trimmedValues = if (lastNonEmpty >= 0) values.subList(0, lastNonEmpty + 1) else emptyList()
-        val clipText = trimmedValues.joinToString("\t")
+        val clipText = trimmedValues.joinToString("\n")
 
         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
         val clip = android.content.ClipData.newPlainText("Row Content", clipText)
@@ -1099,14 +1099,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val text = item?.text?.toString() ?: ""
 
         if (text.isNotEmpty()) {
-            val delimiter = if (text.contains("\t")) "\t" else if (text.contains(",")) "," else "\n"
-            val tokens = text.split(delimiter)
+            val normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+            val delimiter = if (normalized.contains("\n")) "\n" else if (normalized.contains("\t")) "\t" else ","
+            val tokens = normalized.split(delimiter)
+            val reqC = startCol + tokens.size
+            if (reqC > spreadsheetEngine.maxCol) {
+                spreadsheetEngine.maxCol = maxOf(spreadsheetEngine.maxCol, reqC)
+            }
             spreadsheetEngine.pushUndo("Paste Row into Row ${targetRow + 1}")
             for (i in tokens.indices) {
                 val targetC = startCol + i
-                if (targetC < spreadsheetEngine.maxCol) {
-                    spreadsheetEngine.setCell(targetRow, targetC, tokens[i].trim())
-                }
+                spreadsheetEngine.setCell(targetRow, targetC, tokens[i].trim())
             }
             updateUndoRedoState()
             _gridRefreshTrigger.value += 1
@@ -1130,15 +1133,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (text.isNotEmpty()) {
-            val lines = text.split("\n")
+            val normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+            val lines = normalized.split("\n")
+            val reqR = startRow + lines.size
+            if (reqR > spreadsheetEngine.maxRow) {
+                spreadsheetEngine.maxRow = maxOf(spreadsheetEngine.maxRow, reqR)
+            }
             spreadsheetEngine.pushUndo("Paste Column into $headerName")
             for (i in lines.indices) {
                 val targetR = startRow + i
-                if (targetR < spreadsheetEngine.maxRow) {
-                    spreadsheetEngine.setCell(targetR, targetCol, lines[i])
-                    copiedColumnColors?.get(i)?.let { spreadsheetEngine.setCellColor(targetR, targetCol, it) }
-                    copiedColumnTextColors?.get(i)?.let { spreadsheetEngine.setCellTextColor(targetR, targetCol, it) }
-                }
+                spreadsheetEngine.setCell(targetR, targetCol, lines[i])
+                copiedColumnColors?.get(i)?.let { spreadsheetEngine.setCellColor(targetR, targetCol, it) }
+                copiedColumnTextColors?.get(i)?.let { spreadsheetEngine.setCellTextColor(targetR, targetCol, it) }
             }
             updateUndoRedoState()
             _gridRefreshTrigger.value += 1
@@ -1156,16 +1162,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
 
-        if (text.contains("\n")) {
-            val lines = text.split("\n")
-            spreadsheetEngine.pushUndo("Paste Column into $cellName")
+        val normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        if (normalized.contains("\n")) {
+            val lines = normalized.split("\n")
+            val reqR = row + lines.size
+            if (reqR > spreadsheetEngine.maxRow) {
+                spreadsheetEngine.maxRow = maxOf(spreadsheetEngine.maxRow, reqR)
+            }
+            spreadsheetEngine.pushUndo("Paste lines into $cellName")
             for (i in lines.indices) {
                 val targetR = row + i
-                if (targetR < spreadsheetEngine.maxRow) {
-                    spreadsheetEngine.setCell(targetR, col, lines[i])
-                    copiedColumnColors?.get(i)?.let { spreadsheetEngine.setCellColor(targetR, col, it) }
-                    copiedColumnTextColors?.get(i)?.let { spreadsheetEngine.setCellTextColor(targetR, col, it) }
-                }
+                spreadsheetEngine.setCell(targetR, col, lines[i])
+                copiedColumnColors?.get(i)?.let { spreadsheetEngine.setCellColor(targetR, col, it) }
+                copiedColumnTextColors?.get(i)?.let { spreadsheetEngine.setCellTextColor(targetR, col, it) }
             }
             updateUndoRedoState()
             _gridRefreshTrigger.value += 1
