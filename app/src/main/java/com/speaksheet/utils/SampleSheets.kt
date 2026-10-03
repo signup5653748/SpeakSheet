@@ -203,4 +203,45 @@ object SampleSheets {
 
         engine.recalculateAllFormulas()
     }
+
+    fun createSortFilterSample(engine: SpreadsheetEngine) {
+        engine.newSpreadsheet(rows = 20, cols = 8)
+
+        // 1. Headers (Row 1 / Index 0)
+        engine.setCell(0, 0, "Product")
+        engine.setCellBold(0, 0, true)
+        engine.setCellColor(0, 0, 0xFFC8E6C9L.toInt())
+
+        engine.setCell(0, 1, "Score")
+        engine.setCellBold(0, 1, true)
+        engine.setCellColor(0, 0, 0xFFC8E6C9L.toInt())
+
+        engine.setCell(0, 3, """Sorted Result (=SORT(FILTER(A2:B,A2:A<>""),1,TRUE))""")
+        engine.mergeRange(0, 3, 0, 4)
+        engine.setCellBold(0, 3, true)
+        engine.setCellColor(0, 3, 0xFFBBDEFBL.toInt())
+
+        // 2. Input Data in A2:B (Row indices 1..8 -> Rows 2..9 in Excel)
+        val sampleData = listOf(
+            Pair("Bananas", "92"),
+            Pair("Apples", "85"),
+            Pair("", ""),
+            Pair("Dates", "95"),
+            Pair("Cherries", "78"),
+            Pair("", ""),
+            Pair("Figs", "90"),
+            Pair("Elderberry", "88")
+        )
+
+        sampleData.forEachIndexed { i, (item, score) ->
+            val r = 1 + i
+            engine.setCell(r, 0, item)
+            engine.setCell(r, 1, score)
+        }
+
+        // 3. The Formula in Cell D2 (Row index 1, Col 3)
+        engine.setCell(1, 3, """=SORT(FILTER(A2:B,A2:A<>""),1,TRUE)""")
+
+        engine.recalculateAllFormulas()
+    }
 }

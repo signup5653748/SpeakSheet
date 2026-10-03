@@ -1251,17 +1251,33 @@ class SpreadsheetEngine {
         }
     }
 
-    private fun parseCellReference(ref: String): Pair<Int, Int>? {
+    fun parseRange(token: String): Pair<Pair<Int, Int>, Pair<Int, Int>>? {
+        val parts = token.uppercase(Locale.ROOT).split(":")
+        if (parts.size != 2) return null
+        val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return null
+        val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return null
+        return Pair(start, end)
+    }
+
+    private fun parseCellReference(ref: String, defaultRow: Int = -1): Pair<Int, Int>? {
+        if (ref.contains(":")) {
+            return null
+        }
         var col = 0
         var rowStr = ""
-        for (ch in ref) {
+        for (ch in ref.uppercase(Locale.ROOT)) {
             if (ch in 'A'..'Z') {
                 col = col * 26 + (ch - 'A' + 1)
             } else if (ch.isDigit()) {
                 rowStr += ch
             }
         }
-        val row = rowStr.toIntOrNull() ?: return null
+        if (col == 0) return null
+        val row = if (rowStr.isEmpty()) {
+            if (defaultRow >= 0) defaultRow + 1 else return null
+        } else {
+            rowStr.toIntOrNull() ?: return null
+        }
         return Pair(row - 1, col - 1)
     }
 
@@ -1630,6 +1646,12 @@ class SpreadsheetEngine {
             }
 
             val upper = clean.uppercase(Locale.ROOT)
+            if (upper.startsWith("FILTER(") && upper.endsWith(")")) {
+                return evaluateFilter(formula, clean, originR, originC)
+            }
+            if (upper.startsWith("SORT(") && upper.endsWith(")")) {
+                return evaluateSort(formula, clean, originR, originC)
+            }
             val openParen = upper.indexOf('(')
             if (openParen != -1 && upper.endsWith(")")) {
                 val funcName = upper.substring(0, openParen).trim()
@@ -1911,7 +1933,8 @@ class SpreadsheetEngine {
     }
 
     private fun getRowsDataForArgument(arg: String, originR: Int, originC: Int): List<List<String>> {
-        val trimmed = arg.trim()
+        var trimmed = arg.trim()
+        if (trimmed.startsWith("=")) trimmed = trimmed.removePrefix("=").trim()
         val upper = trimmed.uppercase(Locale.ROOT)
         if (upper.startsWith("FILTER(")) {
             return getFilteredRowsData(trimmed, originR, originC)
@@ -1923,8 +1946,8 @@ class SpreadsheetEngine {
         val rangeStr = trimmed.uppercase(Locale.ROOT)
         val parts = rangeStr.split(":")
         if (parts.size != 2) return emptyList()
-        val start = parseCellReference(parts[0].trim()) ?: return emptyList()
-        val end = parseCellReference(parts[1].trim()) ?: return emptyList()
+        val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return emptyList()
+        val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return emptyList()
         val rMin = minOf(start.first, end.first)
         val rMax = maxOf(start.first, end.first)
         val cMin = minOf(start.second, end.second)
@@ -1944,45 +1967,57 @@ class SpreadsheetEngine {
     private fun getFilteredRowsData(formula: String, originR: Int, originC: Int): List<List<String>> {
         var clean = formula.trim()
         if (clean.startsWith("=")) clean = clean.removePrefix("=").trim()
-        val inner = clean.substring(6, clean.length - 1).trim()
+        val openParen = clean.indexOf('(')
+        val closeParen = clean.lastIndexOf(')')
+        if (openParen == -1 || closeParen <= openParen) return emptyList()
+        val inner = clean.substring(openParen + 1, closeParen).trim()
         val args = splitArguments(inner)
-        if (args.size < 3) return emptyList()
+        if (args.size < 2) return emptyList()
 
         val rangeStr = args[0].trim().uppercase(Locale.ROOT)
         val parts = rangeStr.split(":")
         if (parts.size != 2) return emptyList()
 
-        val start = parseCellReference(parts[0].trim()) ?: return emptyList()
-        val end = parseCellReference(parts[1].trim()) ?: return emptyList()
+        val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return emptyList()
+        val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return emptyList()
 
         val rMin = minOf(start.first, end.first)
         val rMax = maxOf(start.first, end.first)
         val cMin = minOf(start.second, end.second)
         val cMax = maxOf(start.second, end.second)
 
-        val condPairs = ArrayList<Pair<List<Triple<Int, Int, String>>, String>>()
-        var i = 1
-        while (i + 1 < args.size) {
-            val cRangeStr = args[i].trim()
-            val cExpr = evaluateExpression(args[i + 1].trim(), originR, originC)
-            val cVals = evaluateRangeWithCoords(cRangeStr)
-            condPairs.add(Pair(cVals, cExpr))
-            i += 2
+        val numRows = maxOf(0, rMax - rMin + 1)
+        if (numRows == 0) return emptyList()
+
+        val rowMatches = BooleanArray(numRows) { true }
+
+        if (args.size == 3 && !args[1].contains(">") && !args[1].contains("<") && !args[1].contains("=")) {
+            val condRangeStr = args[1].trim()
+            val criteria = args[2].trim()
+            val condList = evaluateConditionArray("$condRangeStr$criteria", rMin, rMax, originR, originC)
+            for (idx in 0 until numRows) {
+                if (idx >= condList.size || !condList[idx]) {
+                    rowMatches[idx] = false
+                }
+            }
+        } else {
+            for (argIdx in 1 until args.size) {
+                val condExpr = args[argIdx].trim()
+                if (condExpr.isEmpty()) continue
+                val condList = evaluateConditionArray(condExpr, rMin, rMax, originR, originC)
+                for (idx in 0 until numRows) {
+                    if (idx >= condList.size || !condList[idx]) {
+                        rowMatches[idx] = false
+                    }
+                }
+            }
         }
 
         val rowsData = ArrayList<List<String>>()
-        for (r in rMin..rMax) {
-            val rowIdx = r - rMin
-            var matchAll = true
-            for ((cVals, cExpr) in condPairs) {
-                val cellVal = cVals.getOrNull(rowIdx)?.third ?: ""
-                if (!matchesFilterCondition(cellVal, cExpr)) {
-                    matchAll = false
-                    break
-                }
-            }
-            if (matchAll) {
-                val row = ArrayList<String>()
+        for (idx in 0 until numRows) {
+            if (rowMatches[idx]) {
+                val r = rMin + idx
+                val row = ArrayList<String>(cMax - cMin + 1)
                 for (c in cMin..cMax) {
                     row.add(getCellValue(r, c))
                 }
@@ -2106,7 +2141,10 @@ class SpreadsheetEngine {
     }
 
     private fun evaluateSort(formula: String, clean: String, originR: Int, originC: Int): String {
-        val inner = clean.substring(5, clean.length - 1).trim()
+        val openParen = clean.indexOf('(')
+        val closeParen = clean.lastIndexOf(')')
+        if (openParen == -1 || closeParen <= openParen) return "#VALUE!"
+        val inner = clean.substring(openParen + 1, closeParen).trim()
         val args = splitArguments(inner)
         if (args.isEmpty()) return "#VALUE!"
 
@@ -3171,22 +3209,162 @@ class SpreadsheetEngine {
         return if (evaluateCondition(cond)) trueVal else falseVal
     }
 
-    private fun evaluateCondition(cond: String): Boolean {
-        val op = listOf(">=", "<=", "<>", ">", "<", "=").find { cond.contains(it) } ?: return false
-        val parts = cond.split(op, limit = 2)
-        if (parts.size != 2) return false
-        val leftStr = getValOrRaw(parts[0].trim())
-        val rightStr = parts[1].trim().removeSurrounding("\"")
-        val lNum = leftStr.toDoubleOrNull()
-        val rNum = rightStr.toDoubleOrNull()
+    private fun findConditionOperator(condition: String): Pair<String, Int>? {
+        var inQuotes = false
+        var i = 0
+        while (i < condition.length) {
+            val ch = condition[i]
+            if (ch == '"') {
+                inQuotes = !inQuotes
+                i++
+                continue
+            }
+            if (!inQuotes) {
+                if (i + 1 < condition.length) {
+                    val two = condition.substring(i, i + 2)
+                    if (two == ">=" || two == "<=" || two == "<>") {
+                        return Pair(two, i)
+                    }
+                }
+                val one = condition.substring(i, i + 1)
+                if (one == ">" || one == "<" || one == "=") {
+                    return Pair(one, i)
+                }
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun compareTwoValues(leftStr: String, op: String, rightStr: String): Boolean {
+        val lClean = leftStr.trim()
+        val rClean = rightStr.trim().removeSurrounding("\"").removeSurrounding("'")
+        val lNum = lClean.toDoubleOrNull()
+        val rNum = rClean.toDoubleOrNull()
         return if (lNum != null && rNum != null) {
             when (op) {
-                ">" -> lNum > rNum; "<" -> lNum < rNum; ">=" -> lNum >= rNum; "<=" -> lNum <= rNum; "=" -> lNum == rNum; "<>" -> lNum != rNum; else -> false
+                ">" -> lNum > rNum
+                "<" -> lNum < rNum
+                ">=" -> lNum >= rNum
+                "<=" -> lNum <= rNum
+                "=" -> lNum == rNum
+                "<>" -> lNum != rNum
+                else -> false
             }
         } else {
-            val cmp = leftStr.compareTo(rightStr, ignoreCase = true)
-            when (op) { "=" -> cmp == 0; "<>" -> cmp != 0; ">" -> cmp > 0; "<" -> cmp < 0; ">=" -> cmp >= 0; "<=" -> cmp <= 0; else -> false }
+            val cmp = lClean.compareTo(rClean, ignoreCase = true)
+            when (op) {
+                "=" -> cmp == 0
+                "<>" -> cmp != 0
+                ">" -> cmp > 0
+                "<" -> cmp < 0
+                ">=" -> cmp >= 0
+                "<=" -> cmp <= 0
+                else -> false
+            }
         }
+    }
+
+    private fun evaluateConditionArray(
+        cond: String,
+        rMin: Int,
+        rMax: Int,
+        originR: Int = -1,
+        originC: Int = -1
+    ): List<Boolean> {
+        val opPair = findConditionOperator(cond)
+        val numRows = maxOf(0, rMax - rMin + 1)
+        if (numRows == 0) return emptyList()
+
+        if (opPair == null) {
+            val trimmed = cond.trim()
+            if (trimmed.contains(":")) {
+                val p = trimmed.split(":")
+                val start = parseCellReference(p[0].trim(), defaultRow = 0)
+                val end = parseCellReference(p[1].trim(), defaultRow = maxOf(maxRow - 1, 0))
+                if (start != null && end != null) {
+                    val c = start.second
+                    return (rMin..rMax).map { r ->
+                        val v = getCellValue(r, c).trim()
+                        v.isNotEmpty() && v != "0" && !v.equals("FALSE", ignoreCase = true)
+                    }
+                }
+            }
+            val single = evaluateCondition(cond)
+            return List(numRows) { single }
+        }
+
+        val op = opPair.first
+        val opIdx = opPair.second
+        val left = cond.substring(0, opIdx).trim()
+        val right = cond.substring(opIdx + op.length).trim()
+
+        val leftIsRange = left.contains(":")
+        val rightIsRange = right.contains(":")
+
+        val leftRange = if (leftIsRange) {
+            val p = left.split(":")
+            val s = parseCellReference(p[0].trim(), defaultRow = 0)
+            val e = parseCellReference(p[1].trim(), defaultRow = maxOf(maxRow - 1, 0))
+            if (s != null && e != null) Pair(s, e) else null
+        } else null
+
+        val rightRange = if (rightIsRange) {
+            val p = right.split(":")
+            val s = parseCellReference(p[0].trim(), defaultRow = 0)
+            val e = parseCellReference(p[1].trim(), defaultRow = maxOf(maxRow - 1, 0))
+            if (s != null && e != null) Pair(s, e) else null
+        } else null
+
+        if (leftRange == null && rightRange == null) {
+            val single = evaluateCondition(cond)
+            return List(numRows) { single }
+        }
+
+        val rightConst = if (rightRange == null) {
+            if (right == "\"\"" || right == "''") "" else getValOrRaw(right)
+        } else ""
+
+        val leftConst = if (leftRange == null) {
+            if (left == "\"\"" || left == "''") "" else getValOrRaw(left)
+        } else ""
+
+        val result = ArrayList<Boolean>(numRows)
+        for (r in rMin..rMax) {
+            val lVal = if (leftRange != null) {
+                val lCol = leftRange.first.second
+                getCellValue(r, lCol)
+            } else {
+                leftConst
+            }
+
+            val rVal = if (rightRange != null) {
+                val rCol = rightRange.first.second
+                getCellValue(r, rCol)
+            } else {
+                rightConst
+            }
+
+            result.add(compareTwoValues(lVal, op, rVal))
+        }
+        return result
+    }
+
+    private fun evaluateCondition(cond: String): Boolean {
+        val opPair = findConditionOperator(cond) ?: return false
+        val op = opPair.first
+        val opIdx = opPair.second
+        val left = cond.substring(0, opIdx).trim()
+        val right = cond.substring(opIdx + op.length).trim()
+
+        if (left.contains(":") || right.contains(":")) {
+            val list = evaluateConditionArray(cond, 0, maxOf(maxRow - 1, 0))
+            return list.any { it }
+        }
+
+        val leftStr = if (left == "\"\"" || left == "''") "" else getValOrRaw(left)
+        val rightStr = if (right == "\"\"" || right == "''") "" else getValOrRaw(right)
+        return compareTwoValues(leftStr, op, rightStr)
     }
 
     private fun getValOrRaw(token: String): String {
@@ -3241,8 +3419,8 @@ class SpreadsheetEngine {
     private fun evaluateRangeWithCoords(rangeStr: String): List<Triple<Int, Int, String>> {
         val parts = rangeStr.uppercase(Locale.ROOT).split(":")
         if (parts.size == 2) {
-            val start = parseCellReference(parts[0].trim()) ?: return emptyList()
-            val end = parseCellReference(parts[1].trim()) ?: return emptyList()
+            val start = parseCellReference(parts[0].trim(), defaultRow = 0) ?: return emptyList()
+            val end = parseCellReference(parts[1].trim(), defaultRow = maxOf(maxRow - 1, 0)) ?: return emptyList()
             val rMin = minOf(start.first, end.first)
             val rMax = maxOf(start.first, end.first)
             val cMin = minOf(start.second, end.second)

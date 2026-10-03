@@ -76,29 +76,21 @@ class SpreadsheetEngineTest {
     }
 
     @Test
-    fun testColumnFilter() {
-        engine.setHeaderRow(0)
+    fun testFilterFormula() {
         engine.setCell(0, 0, "Category")
         engine.setCell(1, 0, "Electronics")
         engine.setCell(2, 0, "Furniture")
         engine.setCell(3, 0, "Electronics")
-        engine.setCell(4, 0, "Clothing")
+        engine.setCell(4, 0, "")
+        engine.setCell(5, 0, "Clothing")
 
-        val distinct = engine.getDistinctValuesForColumn(0)
-        assertTrue(distinct.contains("Electronics"))
-        assertTrue(distinct.contains("Furniture"))
-        assertTrue(distinct.contains("Clothing"))
+        engine.setCell(1, 2, """=FILTER(A2:A6,A2:A6<>"")""")
+        engine.recalculateAllFormulas()
 
-        val (visible, total) = engine.applyColumnFilter(0, setOf("Electronics"))
-        assertTrue(visible >= 2)
-        assertFalse(engine.isRowHidden(1))
-        assertTrue(engine.isRowHidden(2))
-        assertFalse(engine.isRowHidden(3))
-        assertTrue(engine.isRowHidden(4))
-
-        engine.clearColumnFilter()
-        assertFalse(engine.isRowHidden(2))
-        assertFalse(engine.isRowHidden(4))
+        assertEquals("Electronics", engine.getCellValue(1, 2))
+        assertEquals("Furniture", engine.getCellValue(2, 2))
+        assertEquals("Electronics", engine.getCellValue(3, 2))
+        assertEquals("Clothing", engine.getCellValue(4, 2))
     }
 
     @Test
@@ -336,5 +328,30 @@ class SpreadsheetEngineTest {
         )
         assertFalse(singleTapSettings.overflowMenuTwoStepMode)
         assertFalse(singleTapSettings.vibrateOnSelect)
+    }
+
+    @Test
+    fun testSortFilterFormulaDemo() {
+        SampleSheets.createSortFilterSample(engine)
+        // Check that formula in D2 evaluated to sorted non-empty items
+        val d2Val = engine.getCellValue(1, 3)
+        assertEquals("Apples", d2Val)
+
+        // Check spilled values in D column
+        assertEquals("Bananas", engine.getCellValue(2, 3))
+        assertEquals("Cherries", engine.getCellValue(3, 3))
+        assertEquals("Dates", engine.getCellValue(4, 3))
+        assertEquals("Elderberry", engine.getCellValue(5, 3))
+        assertEquals("Figs", engine.getCellValue(6, 3))
+        // Verify empty rows were filtered out
+        assertEquals("", engine.getCellValue(7, 3))
+
+        // Check corresponding scores in E column
+        assertEquals("85", engine.getCellValue(1, 4))
+        assertEquals("92", engine.getCellValue(2, 4))
+        assertEquals("78", engine.getCellValue(3, 4))
+        assertEquals("95", engine.getCellValue(4, 4))
+        assertEquals("88", engine.getCellValue(5, 4))
+        assertEquals("90", engine.getCellValue(6, 4))
     }
 }

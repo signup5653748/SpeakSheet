@@ -118,6 +118,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsManager.speak("Opened Sectioned Report sample spreadsheet")
     }
 
+    fun openSampleSortFilterReport() {
+        _currentFileUri.value = null
+        _currentFileName.value = "SORT_FILTER_Demo.xlsx"
+        spreadsheetEngine.newSpreadsheet()
+        com.speaksheet.utils.SampleSheets.createSortFilterSample(spreadsheetEngine)
+        spreadsheetEngine.clearHistory()
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        ttsManager.speak("Opened SORT and FILTER demo spreadsheet")
+    }
+
     init {
         // Clean out any legacy sample files from recent files database
         viewModelScope.launch(Dispatchers.IO) {

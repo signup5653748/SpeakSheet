@@ -215,6 +215,39 @@ fun HomeScreen(
                     item {
                         Card(
                             onClick = {
+                                viewModel.openSampleSortFilterReport()
+                                onNavigateToSpreadsheet()
+                            },
+                            modifier = Modifier
+                                .width(200.dp)
+                                .testTag("template_sort_filter_demo"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                horizontalAlignment = Alignment.Start
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = themeColor.copy(alpha = 0.2f),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.TableChart, contentDescription = null, tint = themeColor, modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text("SORT & FILTER Demo", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("Sample with =SORT(FILTER(...)) formula", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+
+                    item {
+                        Card(
+                            onClick = {
                                 viewModel.openSampleSectionedReport()
                                 onNavigateToSpreadsheet()
                             },

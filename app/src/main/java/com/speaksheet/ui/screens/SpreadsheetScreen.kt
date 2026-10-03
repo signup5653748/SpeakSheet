@@ -1557,6 +1557,7 @@ fun SpreadsheetScreen(
     var focusedOverflowMenuButtonId by remember { mutableStateOf<String?>(null) }
     var activeEditTextFieldUpdater by remember { mutableStateOf<((String) -> Unit)?>(null) }
     var quickActionToManage by remember { mutableStateOf<MenuItemData?>(null) }
+    var cellErrorPopup by remember { mutableStateOf<Pair<Pair<Int, Int>, String>?>(null) }
 
     val initialTab = settings.lastActionMenuTab.coerceIn(0, ACTION_MENU_TABS.lastIndex)
     val pagerState = rememberPagerState(
@@ -1911,6 +1912,10 @@ fun SpreadsheetScreen(
             newC = 0
         }
         selectedCell = Pair(newR, newC)
+        val cellVal = engine.getCellValue(newR, newC)
+        if (cellVal.startsWith("#")) {
+            cellErrorPopup = Pair(Pair(newR, newC), cellVal)
+        }
         scrollToCell(newR, newC)
         viewModel.speakCell(newR, newC)
         triggerHaptic()
@@ -3020,7 +3025,12 @@ fun SpreadsheetScreen(
                                             val r = engine.getRowAt(gridY).coerceIn(0, engine.maxRow - 1)
                                             val c = engine.getColAt(gridX).coerceIn(0, engine.maxCol - 1)
                                             selectedCell = Pair(r, c)
-                                            showMenuForCell = Pair(r, c)
+                                            val cellVal = engine.getCellValue(r, c)
+                                            if (cellVal.startsWith("#")) {
+                                                cellErrorPopup = Pair(Pair(r, c), cellVal)
+                                            } else {
+                                                showMenuForCell = Pair(r, c)
+                                            }
                                             triggerHaptic()
                                         } else if (showRowNumbers && screenX < headerW && screenY > headerTouchH) {
                                             val gridY = (screenY - headerH - curPan.y) / userZoom
@@ -3277,6 +3287,10 @@ fun SpreadsheetScreen(
                                                     lastTapTimestamp = now
                                                     lastTapPosition = startPos
                                                     selectedCell = Pair(r, targetC)
+                                                    val cellVal = engine.getCellValue(r, targetC)
+                                                    if (cellVal.startsWith("#")) {
+                                                        cellErrorPopup = Pair(Pair(r, targetC), cellVal)
+                                                    }
                                                     viewModel.speakCell(r, targetC)
                                                     triggerHaptic()
                                                 }
@@ -5125,6 +5139,118 @@ fun SpreadsheetScreen(
             confirmButton = {
                 TextButton(onClick = { quickActionToManage = null }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    cellErrorPopup?.let { (coord, errCode) ->
+        val (errR, errC) = coord
+        val cellName = "${engine.getColumnName(errC)}${errR + 1}"
+        val formulaText = engine.getCellFormulaOrValue(errR, errC)
+
+        val explanation = when {
+            errCode.startsWith("#SPILL") -> "Spill range blocked: adjacent cells contain overlapping data."
+            errCode.startsWith("#CIRCULAR") -> "Circular reference error: formula refers back to its own cell."
+            errCode.startsWith("#REF") -> "Reference error: target cell does not exist or was deleted."
+            errCode.startsWith("#N/A") -> "Value not available: match or lookup result was not found."
+            errCode.startsWith("#DIV/0") -> "Division by zero error."
+            errCode.startsWith("#NAME") -> "Unrecognized formula function or syntax error."
+            errCode.startsWith("#VALUE") -> "Invalid parameter value or parameter type mismatch."
+            else -> "Formula calculation error ($errCode)."
+        }
+
+        AlertDialog(
+            onDismissRequest = { cellErrorPopup = null },
+            icon = {
+                Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+            },
+            title = {
+                Text("Cell $cellName Error: $errCode", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(explanation, style = MaterialTheme.typography.bodyMedium)
+                    if (formulaText.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        ) {
+                            Text(
+                                text = formulaText,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clip = android.content.ClipData.newPlainText("Formula", formulaText)
+                            clipboard.setPrimaryClip(clip)
+                            viewModel.ttsManager.speak("Formula copied. Enjoy your coffee break!")
+                            android.widget.Toast.makeText(context, "☕ Formula copied! Enjoy your coffee break.", android.widget.Toast.LENGTH_SHORT).show()
+                            cellErrorPopup = null
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                        ),
+                        modifier = Modifier.testTag("button_coffee_error_dialog")
+                    ) {
+                        Text("☕ Coffee", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    Button(
+                        onClick = {
+                            editingCell = Pair(errR, errC)
+                            cellErrorPopup = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = themeAccentColor),
+                        modifier = Modifier.testTag("button_fix_error_formula")
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Fix Formula")
+                    }
+                }
+            },
+            dismissButton = {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val textToCopy = if (formulaText.isNotEmpty()) formulaText else errCode
+                            val clip = android.content.ClipData.newPlainText("Formula", textToCopy)
+                            clipboard.setPrimaryClip(clip)
+                            viewModel.ttsManager.speak("Formula copied to clipboard")
+                            android.widget.Toast.makeText(context, "Copied formula to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                            cellErrorPopup = null
+                        },
+                        modifier = Modifier.testTag("button_copy_error_formula")
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Copy")
+                    }
+                    TextButton(
+                        onClick = { cellErrorPopup = null },
+                        modifier = Modifier.testTag("button_dismiss_error_dialog")
+                    ) {
+                        Text("Dismiss")
+                    }
                 }
             }
         )
