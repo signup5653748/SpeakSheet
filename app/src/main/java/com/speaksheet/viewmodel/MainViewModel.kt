@@ -1162,27 +1162,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val colName = spreadsheetEngine.getColumnName(col)
         val cellName = "$colName${row + 1}"
 
-        val normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-        if (normalized.contains("\n")) {
-            val lines = normalized.split("\n")
-            val reqR = row + lines.size
-            if (reqR > spreadsheetEngine.maxRow) {
-                spreadsheetEngine.maxRow = maxOf(spreadsheetEngine.maxRow, reqR)
-            }
-            spreadsheetEngine.pushUndo("Paste lines into $cellName")
-            for (i in lines.indices) {
-                val targetR = row + i
-                spreadsheetEngine.setCell(targetR, col, lines[i])
-                copiedColumnColors?.get(i)?.let { spreadsheetEngine.setCellColor(targetR, col, it) }
-                copiedColumnTextColors?.get(i)?.let { spreadsheetEngine.setCellTextColor(targetR, col, it) }
-            }
-            updateUndoRedoState()
-            _gridRefreshTrigger.value += 1
-            autoSaveCurrentFile()
-            ttsManager.speak("Pasted ${lines.size} rows starting at $cellName")
-            return
-        }
-
         if (text.isNotEmpty() || copiedCellBgColor != null || copiedCellTextColor != null) {
             spreadsheetEngine.pushUndo("Paste into $cellName")
             if (text.isNotEmpty()) {

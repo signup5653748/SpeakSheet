@@ -1644,7 +1644,7 @@ fun SpreadsheetScreen(
     var clearColConfirm by remember { mutableStateOf<Int?>(null) }
     var clearRowConfirm by remember { mutableStateOf<Int?>(null) }
     var deleteRowConfirm by remember { mutableStateOf<Int?>(null) }
-    var showDeleteModeChooser by remember { mutableStateOf(false) }
+    var showDeleteOptionsDialog by remember { mutableStateOf(false) }
     var showLanguagePicker by remember { mutableStateOf(false) }
 
     val isCsv = fileName.endsWith(".csv", ignoreCase = true)
@@ -2784,13 +2784,7 @@ fun SpreadsheetScreen(
                         ) {
                             FilledTonalIconButton(
                                 onClick = {
-                                    if (selectedColumn != null) {
-                                        viewModel.copyColumn(context, selectedColumn!!)
-                                    } else if (selectedRow != null) {
-                                        viewModel.copyRow(context, selectedRow!!)
-                                    } else {
-                                        viewModel.copyCell(context, curRow, curCol)
-                                    }
+                                    viewModel.copyCell(context, curRow, curCol)
                                 },
                                 modifier = Modifier.size(38.dp).testTag("action_copy")
                             ) {
@@ -2798,30 +2792,11 @@ fun SpreadsheetScreen(
                             }
                             FilledTonalIconButton(
                                 onClick = {
-                                    if (selectedColumn != null) {
-                                        viewModel.pasteColumn(context, selectedColumn!!, startRow = 0)
-                                    } else if (selectedRow != null) {
-                                        viewModel.pasteRow(context, selectedRow!!, startCol = 0)
-                                    } else {
-                                        viewModel.pasteCell(context, curRow, curCol)
-                                    }
+                                    viewModel.pasteCell(context, curRow, curCol)
                                 },
                                 modifier = Modifier.size(38.dp).testTag("action_paste")
                             ) {
                                 Icon(Icons.Default.ContentPaste, contentDescription = "Paste", modifier = Modifier.size(18.dp))
-                            }
-                            val deleteMode = settings.deleteMode
-                            val deleteIcon = when (deleteMode) {
-                                DeleteMode.CLEAR_TEXT -> Icons.Default.Delete
-                                DeleteMode.CLEAR_FORMATTING -> Icons.Default.Clear
-                                DeleteMode.CLEAR_ROW -> Icons.Default.DeleteSweep
-                                DeleteMode.CLEAR_COLUMN -> Icons.Default.DeleteOutline
-                            }
-                            val deleteDesc = when (deleteMode) {
-                                DeleteMode.CLEAR_TEXT -> "Clear Text"
-                                DeleteMode.CLEAR_FORMATTING -> "Clear Formatting"
-                                DeleteMode.CLEAR_ROW -> "Clear Row"
-                                DeleteMode.CLEAR_COLUMN -> "Clear Column"
                             }
                             Surface(
                                 shape = CircleShape,
@@ -2830,25 +2805,14 @@ fun SpreadsheetScreen(
                                     .size(38.dp)
                                     .combinedClickable(
                                         onClick = {
-                                            if (selectedColumn != null) {
-                                                viewModel.clearColumn(selectedColumn!!)
-                                            } else if (selectedRow != null) {
-                                                viewModel.clearRow(selectedRow!!)
-                                            } else {
-                                                when (deleteMode) {
-                                                    DeleteMode.CLEAR_TEXT -> viewModel.clearCellText(curRow, curCol)
-                                                    DeleteMode.CLEAR_FORMATTING -> viewModel.clearCellFormatting(curRow, curCol)
-                                                    DeleteMode.CLEAR_ROW -> clearRowConfirm = curRow
-                                                    DeleteMode.CLEAR_COLUMN -> clearColConfirm = curCol
-                                                }
-                                            }
+                                            viewModel.deleteCell(curRow, curCol)
                                         },
-                                        onLongClick = { showDeleteModeChooser = true }
+                                        onLongClick = { showDeleteOptionsDialog = true }
                                     )
                                     .testTag("action_delete")
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Icon(deleteIcon, contentDescription = deleteDesc, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Cell (Long press for options)", modifier = Modifier.size(18.dp))
                                 }
                             }
                             Surface(
@@ -4031,7 +3995,8 @@ fun SpreadsheetScreen(
                         headerW + 8f * density,
                         maxOf(headerW + 8f * density, viewportSize.width.toFloat() - estToolbarW - 8f * density)
                     )
-                    val clampedY = (headerH + 8f * density).coerceIn(0f, maxOf(0f, viewportSize.height.toFloat() - 60f * density))
+                    // Placed directly below the ABC letters row
+                    val clampedY = (headerH + 2f * density).coerceIn(0f, maxOf(0f, viewportSize.height.toFloat() - 60f * density))
                     Pair(clampedX, clampedY)
                 } else {
                     val r = selectedRow!!
@@ -4635,35 +4600,38 @@ fun SpreadsheetScreen(
         )
     }
 
-    if (showDeleteModeChooser) {
+    if (showDeleteOptionsDialog) {
+        val targetCell = selectedCell ?: Pair(0, 0)
+        val selRow = targetCell.first
+        val selCol = targetCell.second
         AlertDialog(
-            onDismissRequest = { showDeleteModeChooser = false },
-            title = { Text("Choose Delete Action") },
+            onDismissRequest = { showDeleteOptionsDialog = false },
+            title = { Text("Delete Options") },
             text = {
                 Column {
                     listOf(
-                        DeleteMode.CLEAR_TEXT to "Clear text",
-                        DeleteMode.CLEAR_FORMATTING to "Clear formatting",
-                        DeleteMode.CLEAR_ROW to "Clear row",
-                        DeleteMode.CLEAR_COLUMN to "Clear column"
-                    ).forEach { (mode, label) ->
+                        "Clear Cell" to { viewModel.deleteCell(selRow, selCol) },
+                        "Clear Row" to { clearRowConfirm = selRow },
+                        "Delete Row" to { deleteRowConfirm = selRow },
+                        "Clear Formatting" to { viewModel.clearCellFormatting(selRow, selCol) }
+                    ).forEach { (label, action) ->
                         Text(
                             text = label,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    showDeleteModeChooser = false
-                                    viewModel.updateDeleteMode(mode)
+                                    showDeleteOptionsDialog = false
+                                    action()
                                 }
                                 .padding(16.dp),
-                            color = themeAccentColor,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Medium
                         )
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showDeleteModeChooser = false }) { Text("Cancel") }
+                TextButton(onClick = { showDeleteOptionsDialog = false }) { Text("Cancel") }
             }
         )
     }
