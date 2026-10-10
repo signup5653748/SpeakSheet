@@ -370,12 +370,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val curUri = _currentFileUri.value
                 var saveSuccess = false
                 var displayPath = fileName
+                val hasExistingDoc = curUri != null && !curUri.toString().startsWith("sample://")
 
                 // 1. If currently opened from an external writable content URI (SAF file picker / File Explorer), update existing file in place!
                 if (curUri != null && curUri.scheme == "content" && !curUri.toString().startsWith("sample://")) {
                     try {
-                        val stream = context.contentResolver.openOutputStream(curUri, "wt")
-                            ?: context.contentResolver.openOutputStream(curUri, "w")
+                        val stream = context.contentResolver.openOutputStream(curUri, "w")
+                            ?: context.contentResolver.openOutputStream(curUri, "wt")
                         stream?.use { out ->
                             if (isCsv) {
                                 spreadsheetEngine.saveCSV(out)
@@ -386,6 +387,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             displayPath = fileName
                         }
                         if (saveSuccess) {
+                            try {
+                                context.contentResolver.takePersistableUriPermission(
+                                    curUri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                                )
+                            } catch (_: Throwable) {}
                             recentFileDao.upsertRecentFile(
                                 RecentFile(
                                     uri = curUri.toString(),
@@ -431,8 +438,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // 2. Only if no existing file was open (brand new unsaved document or external content write failed), save to Downloads
-                if (!saveSuccess) {
+                // 2. Only if no existing document was open (brand new unsaved document), save to Downloads/internal
+                if (!saveSuccess && !hasExistingDoc) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         try {
                             val resolver = context.contentResolver
@@ -445,7 +452,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                             val insertedUri = resolver.insert(collection, contentValues)
                             if (insertedUri != null) {
-                                resolver.openOutputStream(insertedUri, "wt")?.use { out ->
+                                resolver.openOutputStream(insertedUri, "w")?.use { out ->
                                     if (isCsv) {
                                         spreadsheetEngine.saveCSV(out)
                                     } else {
@@ -607,8 +614,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun openFile(uri: Uri, name: String) {
         _currentFileUri.value = uri
         _currentFileName.value = name
+        val context = getApplication<Application>()
+        if (uri.scheme == "content") {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (_: Throwable) {}
+        }
         viewModelScope.launch {
-            spreadsheetEngine.loadFromUri(getApplication(), uri)
+            spreadsheetEngine.loadFromUri(context, uri)
             spreadsheetEngine.clearHistory()
             
             // Restore sheet states if present in Room
@@ -1295,8 +1311,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cellName = "$colName${row + 1}"
         spreadsheetEngine.pushUndo("Delete $cellName")
         spreadsheetEngine.setCell(row, col, "")
-        spreadsheetEngine.setCellColor(row, col, null)
-        spreadsheetEngine.setCellTextColor(row, col, null)
         updateUndoRedoState()
         _gridRefreshTrigger.value += 1
         autoSaveCurrentFile()
