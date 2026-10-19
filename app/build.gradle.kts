@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-  namespace = "com.aistudio.vault"
+  namespace = "com.example"
   compileSdk = 34
 
   defaultConfig {
