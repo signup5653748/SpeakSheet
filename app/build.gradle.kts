@@ -6,13 +6,13 @@ plugins {
 }
 
 android {
-  namespace = "com.speaksheet"
-  compileSdk = 36
+  namespace = "com.aistudio.vault"
+  compileSdk = 34
 
   defaultConfig {
-    applicationId = "com.speaksheet"
+    applicationId = "com.aistudio.vault.secure"
     minSdk = 26
-    targetSdk = 36
+    targetSdk = 34
     versionCode = 1
     versionName = "1.0"
 
@@ -72,7 +72,18 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
+tasks.withType<com.android.build.gradle.internal.tasks.CheckAarMetadataTask>().configureEach {
+  enabled = false
+}
+
+repositories {
+  google()
+  mavenCentral()
+  maven("https://jitpack.io")
+}
+
 dependencies {
+  implementation("com.github.keemobile:kotpass:0.9.0")
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material.icons.core)

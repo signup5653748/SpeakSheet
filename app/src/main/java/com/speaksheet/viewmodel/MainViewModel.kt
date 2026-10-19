@@ -1228,6 +1228,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setColumnHeaderColor(c: Int, color: Int?) {
+        val colName = spreadsheetEngine.getColumnName(c)
+        val headerName = spreadsheetEngine.getColumnHeaderName(c)
+        spreadsheetEngine.pushUndo("Column header color $colName")
+        spreadsheetEngine.setCellColor(0, c, color)
+        updateUndoRedoState()
+        _gridRefreshTrigger.value += 1
+        autoSaveCurrentFile()
+        if (color != null) {
+            ttsManager.speak("Header color set for column $colName $headerName")
+        } else {
+            ttsManager.speak("Header color cleared for column $colName $headerName")
+        }
+    }
+
     fun setColumnColor(c: Int, color: Int?) {
         val colName = spreadsheetEngine.getColumnName(c)
         val headerName = spreadsheetEngine.getColumnHeaderName(c)

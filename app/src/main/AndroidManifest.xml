@@ -12,7 +12,7 @@
     </queries>
 
     <application
-        android:name=".SpeakSheetApp"
+        android:name="com.speaksheet.SpeakSheetApp"
         android:allowBackup="true"
         android:requestLegacyExternalStorage="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -24,7 +24,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
         <activity
-            android:name=".MainActivity"
+            android:name="com.speaksheet.MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTop"

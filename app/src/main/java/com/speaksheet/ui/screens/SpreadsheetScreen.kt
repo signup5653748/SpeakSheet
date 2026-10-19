@@ -142,9 +142,14 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardActions
 import com.speaksheet.utils.SpreadsheetEngine
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
@@ -421,7 +426,7 @@ fun getActionsForTab(
         else -> listOf(
             MenuItemData("Resize col", Icons.Default.WidthNormal, "resize_column", "Change width of selected column"),
             MenuItemData("Speak col", Icons.AutoMirrored.Filled.VolumeUp, "speak_column"),
-            MenuItemData("Col color", Icons.Default.Palette, "column_color"),
+            MenuItemData("Col header color", Icons.Default.Palette, "column_color", "Change Column Header Color"),
             MenuItemData("Clear col", Icons.Default.Clear, "clear_column"),
             MenuItemData("Delete col", Icons.Default.Delete, "delete_column")
         )
@@ -602,7 +607,7 @@ fun executeSpreadsheetAction(
         "speak_column" -> viewModel.speakColumn(c)
         "column_color" -> {
             onDismiss()
-            onOpenColorPicker(ColorTarget.Column(c), ColorPickerTab.BACKGROUND)
+            onOpenColorPicker(ColorTarget.Cell(0, c), ColorPickerTab.BACKGROUND)
         }
         "clear_column" -> {
             onDismiss()
@@ -1552,6 +1557,9 @@ fun SpreadsheetScreen(
     val hapticFeedback = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val formulaFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var isEditingInline by remember { mutableStateOf(false) }
     
     var selectedCell by remember { mutableStateOf<Pair<Int, Int>?>(Pair(0, 0)) }
     var selectedColumn by remember { mutableStateOf<Int?>(null) }
@@ -1633,6 +1641,16 @@ fun SpreadsheetScreen(
     LaunchedEffect(findQuery, matchCase) {
         if (findQuery.isNotEmpty()) {
             viewModel.ttsManager.speak(if (matches.isEmpty()) "No matches found" else "${matches.size} matches found")
+        }
+    }
+
+    LaunchedEffect(isEditingInline) {
+        if (isEditingInline) {
+            delay(50)
+            try {
+                formulaFocusRequester.requestFocus()
+                keyboardController?.show()
+            } catch (_: Throwable) {}
         }
     }
     
@@ -2619,61 +2637,6 @@ fun SpreadsheetScreen(
                     containerColor = MaterialTheme.colorScheme.background
                 )
             )
-
-            if (showFindReplace) {
-                FindAndReplaceBar(
-                    query = findQuery,
-                    onQueryChange = {
-                        findQuery = it
-                        currentMatchIndex = 0
-                    },
-                    replaceText = replaceQuery,
-                    onReplaceTextChange = { replaceQuery = it },
-                    matchCase = matchCase,
-                    onMatchCaseToggle = {
-                        matchCase = !matchCase
-                        currentMatchIndex = 0
-                    },
-                    matchCount = matches.size,
-                    currentMatchIndex = currentMatchIndex,
-                    onPrevMatch = {
-                        if (matches.isNotEmpty()) {
-                            currentMatchIndex = if (currentMatchIndex - 1 < 0) matches.size - 1 else currentMatchIndex - 1
-                            val (mr, mc) = matches[currentMatchIndex]
-                            selectedCell = Pair(mr, mc)
-                            scrollToCell(mr, mc)
-                            viewModel.ttsManager.speak("Match ${currentMatchIndex + 1} of ${matches.size}: cell ${engine.getColumnName(mc)}${mr + 1}, ${engine.getCellValue(mr, mc)}")
-                        }
-                    },
-                    onNextMatch = {
-                        if (matches.isNotEmpty()) {
-                            currentMatchIndex = (currentMatchIndex + 1) % matches.size
-                            val (mr, mc) = matches[currentMatchIndex]
-                            selectedCell = Pair(mr, mc)
-                            scrollToCell(mr, mc)
-                            viewModel.ttsManager.speak("Match ${currentMatchIndex + 1} of ${matches.size}: cell ${engine.getColumnName(mc)}${mr + 1}, ${engine.getCellValue(mr, mc)}")
-                        }
-                    },
-                    onReplace = {
-                        if (matches.isNotEmpty() && findQuery.isNotEmpty()) {
-                            val currentMatch = matches.getOrNull(currentMatchIndex)
-                            if (currentMatch != null) {
-                                viewModel.replaceSingleMatch(currentMatch.first, currentMatch.second, findQuery, replaceQuery, matchCase)
-                            }
-                        }
-                    },
-                    onReplaceAll = {
-                        if (findQuery.isNotEmpty()) {
-                            viewModel.findAndReplace(findQuery, replaceQuery, matchCase)
-                        }
-                    },
-                    onClose = {
-                        showFindReplace = false
-                        findQuery = ""
-                        replaceQuery = ""
-                    }
-                )
-            }
         }
     },
         bottomBar = {
@@ -2715,65 +2678,142 @@ fun SpreadsheetScreen(
                                 .weight(1f)
                                 .padding(end = 8.dp)
                                 .testTag("selected_cell_card")
-                                .clickable(
-                                    onClickLabel = if (isBanner) "Edit banner row ${curRow + 1}" else "Edit cell $cellCoord"
-                                ) {
-                                    editingCell = Pair(curRow, curCol)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = themeAccentColor
-                                ) {
-                                    Text(
-                                        text = cellCoord,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                .pointerInput(curRow, curCol) {
+                                    detectTapGestures(
+                                        onDoubleTap = {
+                                            editingCell = null
+                                            isEditingInline = true
+                                            coroutineScope.launch {
+                                                delay(50)
+                                                try {
+                                                    formulaFocusRequester.requestFocus()
+                                                    keyboardController?.show()
+                                                } catch (_: Throwable) {}
+                                            }
+                                        },
+                                        onTap = {
+                                            editingCell = Pair(curRow, curCol)
+                                        }
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    if (curRow > 0 && cellHeader.isNotEmpty() && !cellHeader.startsWith("Column ") && !isBanner) {
+                        ) {
+                            if (isEditingInline) {
+                                var inlineTextValue by remember(curRow, curCol, refreshTrigger) {
+                                    val currentVal = engine.getCellFormulaOrValue(curRow, curCol)
+                                    mutableStateOf(TextFieldValue(currentVal, selection = TextRange(currentVal.length)))
+                                }
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = themeAccentColor
+                                    ) {
                                         Text(
-                                            text = cellHeader,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 11.sp,
-                                            color = themeAccentColor,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            text = cellCoord,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                         )
-                                    } else if (isBanner) {
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    OutlinedTextField(
+                                        value = inlineTextValue,
+                                        onValueChange = { newVal ->
+                                            inlineTextValue = newVal
+                                            viewModel.updateCell(curRow, curCol, newVal.text)
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 40.dp)
+                                            .focusRequester(formulaFocusRequester)
+                                            .testTag("formula_input_field"),
+                                        singleLine = true,
+                                        placeholder = { Text("Enter text or =formula", fontSize = 12.sp) },
+                                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                        keyboardActions = KeyboardActions(
+                                            onDone = {
+                                                keyboardController?.hide()
+                                                isEditingInline = false
+                                            }
+                                        ),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = themeAccentColor,
+                                            unfocusedBorderColor = Color.Transparent,
+                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                                        ),
+                                        trailingIcon = {
+                                            IconButton(
+                                                onClick = {
+                                                    keyboardController?.hide()
+                                                    isEditingInline = false
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(Icons.Default.Check, contentDescription = "Done editing", tint = themeAccentColor)
+                                            }
+                                        }
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = themeAccentColor
+                                    ) {
                                         Text(
-                                            text = "Full-width Banner",
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 11.sp,
-                                            color = themeAccentColor,
+                                            text = cellCoord,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        if (curRow > 0 && cellHeader.isNotEmpty() && !cellHeader.startsWith("Column ") && !isBanner) {
+                                            Text(
+                                                text = cellHeader,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 11.sp,
+                                                color = themeAccentColor,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        } else if (isBanner) {
+                                            Text(
+                                                text = "Full-width Banner",
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 11.sp,
+                                                color = themeAccentColor,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Text(
+                                            text = if (cellVal.isEmpty()) (if (isBanner) "(empty banner - double-tap to edit)" else "(empty cell - double-tap to edit)") else cellVal,
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (cellVal.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 12.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    Text(
-                                        text = if (cellVal.isEmpty()) (if (isBanner) "(empty banner - tap to edit)" else "(empty cell - tap to edit)") else cellVal,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (cellVal.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = themeAccentColor.copy(alpha = 0.6f)
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = themeAccentColor.copy(alpha = 0.6f)
-                                )
                             }
                         }
                         
@@ -2848,7 +2888,7 @@ fun SpreadsheetScreen(
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Speak Cell", modifier = Modifier.size(18.dp))
                             }
-                            FilledTonalIconButton(
+                            IconButton(
                                 onClick = {
                                     val targetTab = settings.lastActionMenuTab.coerceIn(0, ACTION_MENU_TABS.lastIndex)
                                     coroutineScope.launch {
@@ -3716,18 +3756,6 @@ fun SpreadsheetScreen(
                             style = Stroke(width = 1f * density)
                         )
 
-                        // Draggable resize handle on right edge of Column Header
-                        val handleH = 16f * density
-                        val handleW = 3f * density
-                        val handleX = colRight - handleW / 2
-                        val handleY = (headerH - handleH) / 2
-                        drawRoundRect(
-                            color = if (activeColResizeDrag == hc) themeAccentColor else Color.LightGray.copy(alpha = 0.65f),
-                            topLeft = Offset(handleX, handleY),
-                            size = Size(handleW, handleH),
-                            cornerRadius = CornerRadius(1.5f * density, 1.5f * density)
-                        )
-
                         clipRect(
                             left = maxOf(headerW, colLeft),
                             top = 0f,
@@ -3748,6 +3776,23 @@ fun SpreadsheetScreen(
                                 )
                             )
                         }
+
+                        // Prominent draggable resize grip handle on right edge of Column Header
+                        val handleH = 20f * density
+                        val handleW = 4f * density
+                        val handleX = colRight - handleW / 2
+                        val handleY = (headerH - handleH) / 2
+                        drawRoundRect(
+                            color = if (activeColResizeDrag == hc) themeAccentColor else Color.White.copy(alpha = 0.85f),
+                            topLeft = Offset(handleX, handleY),
+                            size = Size(handleW, handleH),
+                            cornerRadius = CornerRadius(2f * density, 2f * density)
+                        )
+                        val dotRadius = 1.2f * density
+                        val dotColor = if (activeColResizeDrag == hc) Color.White else Color(0xFF1E293B)
+                        drawCircle(color = dotColor, radius = dotRadius, center = Offset(colRight, handleY + 5f * density))
+                        drawCircle(color = dotColor, radius = dotRadius, center = Offset(colRight, handleY + 10f * density))
+                        drawCircle(color = dotColor, radius = dotRadius, center = Offset(colRight, handleY + 15f * density))
 
                         hc++
                     }
@@ -3827,18 +3872,6 @@ fun SpreadsheetScreen(
                                 style = Stroke(width = 1f * density)
                             )
 
-                            // Draggable resize handle on bottom edge of Row Header
-                            val handleW = 16f * density
-                            val handleH = 3f * density
-                            val handleX = (headerW - handleW) / 2
-                            val handleY = rowBottom - handleH / 2
-                            drawRoundRect(
-                                color = if (activeRowResizeDrag == hr) themeAccentColor else Color.LightGray.copy(alpha = 0.65f),
-                                topLeft = Offset(handleX, handleY),
-                                size = Size(handleW, handleH),
-                                cornerRadius = CornerRadius(1.5f * density, 1.5f * density)
-                            )
-
                             val textLayout = cellLayoutCache.getRowHeaderLayout(
                                 r = hr,
                                 label = rowName,
@@ -3852,6 +3885,23 @@ fun SpreadsheetScreen(
                                     rowTop + (rowHeight - textLayout.size.height) / 2
                                 )
                             )
+
+                            // Prominent draggable resize grip handle on bottom edge of Row Header
+                            val handleW = 20f * density
+                            val handleH = 4f * density
+                            val handleX = (headerW - handleW) / 2
+                            val handleY = rowBottom - handleH / 2
+                            drawRoundRect(
+                                color = if (activeRowResizeDrag == hr) themeAccentColor else Color.White.copy(alpha = 0.85f),
+                                topLeft = Offset(handleX, handleY),
+                                size = Size(handleW, handleH),
+                                cornerRadius = CornerRadius(2f * density, 2f * density)
+                            )
+                            val dotRadius = 1.2f * density
+                            val dotColor = if (activeRowResizeDrag == hr) Color.White else Color(0xFF1E293B)
+                            drawCircle(color = dotColor, radius = dotRadius, center = Offset(handleX + 5f * density, rowBottom))
+                            drawCircle(color = dotColor, radius = dotRadius, center = Offset(handleX + 10f * density, rowBottom))
+                            drawCircle(color = dotColor, radius = dotRadius, center = Offset(handleX + 15f * density, rowBottom))
 
                             hr++
                         }
@@ -4018,10 +4068,10 @@ fun SpreadsheetScreen(
 
                 Surface(
                     shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    color = Color(0xFF1E293B),
                     tonalElevation = 6.dp,
                     shadowElevation = 8.dp,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .offset { IntOffset(targetX.roundToInt(), targetY.roundToInt()) }
                         .testTag("floating_toolbar")
@@ -4045,17 +4095,18 @@ fun SpreadsheetScreen(
                             Icon(
                                 Icons.Default.ContentCopy,
                                 contentDescription = "Copy",
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(16.dp),
+                                tint = Color.White
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("Copy", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Copy", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                         }
 
                         Box(
                             modifier = Modifier
                                 .width(1.dp)
                                 .height(20.dp)
-                                .background(MaterialTheme.colorScheme.outlineVariant)
+                                .background(Color.White.copy(alpha = 0.3f))
                         )
 
                         TextButton(
@@ -4073,17 +4124,18 @@ fun SpreadsheetScreen(
                             Icon(
                                 Icons.Default.ContentPaste,
                                 contentDescription = "Paste",
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(16.dp),
+                                tint = Color.White
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("Paste", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Paste", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                         }
 
                         Box(
                             modifier = Modifier
                                 .width(1.dp)
                                 .height(20.dp)
-                                .background(MaterialTheme.colorScheme.outlineVariant)
+                                .background(Color.White.copy(alpha = 0.3f))
                         )
 
                         TextButton(
@@ -4102,10 +4154,10 @@ fun SpreadsheetScreen(
                                 Icons.Default.Delete,
                                 contentDescription = "Delete",
                                 modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.error
+                                tint = Color(0xFFFF6B6B)
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("Delete", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                            Text("Delete", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF6B6B))
                         }
 
                         IconButton(
@@ -4119,7 +4171,7 @@ fun SpreadsheetScreen(
                                 Icons.Default.Close,
                                 contentDescription = "Close floating toolbar",
                                 modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = Color.White.copy(alpha = 0.85f)
                             )
                         }
                     }
@@ -4453,7 +4505,7 @@ fun SpreadsheetScreen(
             onSetBgColor = { color ->
                 when (val target = state.target) {
                     is ColorTarget.Cell -> viewModel.setCellColor(target.r, target.c, color)
-                    is ColorTarget.Column -> viewModel.setColumnColor(target.c, color)
+                    is ColorTarget.Column -> viewModel.setColumnHeaderColor(target.c, color)
                     is ColorTarget.Row -> viewModel.setRowColor(target.r, color)
                     is ColorTarget.Header -> viewModel.setHeaderBgColor(color)
                 }
@@ -4532,6 +4584,81 @@ fun SpreadsheetScreen(
                 }
             }
         )
+    }
+
+    if (showFindReplace) {
+        val findReplaceSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = {
+                showFindReplace = false
+                findQuery = ""
+                replaceQuery = ""
+            },
+            sheetState = findReplaceSheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            modifier = Modifier.testTag("find_replace_bottom_sheet")
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(bottom = 8.dp)
+            ) {
+                FindAndReplaceBar(
+                    query = findQuery,
+                    onQueryChange = {
+                        findQuery = it
+                        currentMatchIndex = 0
+                    },
+                    replaceText = replaceQuery,
+                    onReplaceTextChange = { replaceQuery = it },
+                    matchCase = matchCase,
+                    onMatchCaseToggle = {
+                        matchCase = !matchCase
+                        currentMatchIndex = 0
+                    },
+                    matchCount = matches.size,
+                    currentMatchIndex = currentMatchIndex,
+                    onPrevMatch = {
+                        if (matches.isNotEmpty()) {
+                            currentMatchIndex = if (currentMatchIndex - 1 < 0) matches.size - 1 else currentMatchIndex - 1
+                            val (mr, mc) = matches[currentMatchIndex]
+                            selectedCell = Pair(mr, mc)
+                            scrollToCell(mr, mc)
+                            viewModel.ttsManager.speak("Match ${currentMatchIndex + 1} of ${matches.size}: cell ${engine.getColumnName(mc)}${mr + 1}, ${engine.getCellValue(mr, mc)}")
+                        }
+                    },
+                    onNextMatch = {
+                        if (matches.isNotEmpty()) {
+                            currentMatchIndex = (currentMatchIndex + 1) % matches.size
+                            val (mr, mc) = matches[currentMatchIndex]
+                            selectedCell = Pair(mr, mc)
+                            scrollToCell(mr, mc)
+                            viewModel.ttsManager.speak("Match ${currentMatchIndex + 1} of ${matches.size}: cell ${engine.getColumnName(mc)}${mr + 1}, ${engine.getCellValue(mr, mc)}")
+                        }
+                    },
+                    onReplace = {
+                        if (matches.isNotEmpty() && findQuery.isNotEmpty()) {
+                            val currentMatch = matches.getOrNull(currentMatchIndex)
+                            if (currentMatch != null) {
+                                viewModel.replaceSingleMatch(currentMatch.first, currentMatch.second, findQuery, replaceQuery, matchCase)
+                            }
+                        }
+                    },
+                    onReplaceAll = {
+                        if (findQuery.isNotEmpty()) {
+                            viewModel.findAndReplace(findQuery, replaceQuery, matchCase)
+                        }
+                    },
+                    onClose = {
+                        showFindReplace = false
+                        findQuery = ""
+                        replaceQuery = ""
+                    }
+                )
+            }
+        }
     }
 
     clearColConfirm?.let { col ->
@@ -5691,7 +5818,7 @@ fun UnifiedColorPickerDialog(
 
     val currentBgColor = when (val target = state.target) {
         is ColorTarget.Cell -> engine.getCellColor(target.r, target.c)
-        is ColorTarget.Column -> engine.getColumnColor(target.c)
+        is ColorTarget.Column -> engine.getCellColor(0, target.c) ?: engine.getColumnColor(target.c)
         is ColorTarget.Row -> engine.getRowColor(target.r)
         is ColorTarget.Header -> engine.headerBgColor
     }

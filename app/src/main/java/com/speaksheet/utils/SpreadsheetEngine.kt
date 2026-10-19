@@ -2769,6 +2769,10 @@ class SpreadsheetEngine {
         return "Column ${getColumnName(col)}"
     }
 
+    fun setColumnHeaderColor(col: Int, color: Int?) {
+        setCellColor(0, col, color)
+    }
+
     fun setHeaderBgColor(color: Int?) {
         currentSheet.headerBgColor = color
         for (hr in headerRows) {
