@@ -10,6 +10,7 @@ import app.keemobile.kotpass.database.modifiers.moveEntry
 import app.keemobile.kotpass.database.modifiers.removeEntry
 import app.keemobile.kotpass.models.Entry
 import app.keemobile.kotpass.models.Group
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @OptIn(FlowPreview::class)
@@ -36,6 +38,10 @@ class KeePassViewModel : ViewModel() {
     private val _currentSubGroups = MutableStateFlow<List<Group>>(emptyList())
     val currentSubGroups: StateFlow<List<Group>> = _currentSubGroups.asStateFlow()
 
+    // Unsaved changes state flow
+    private val _hasUnsavedChanges = MutableStateFlow(false)
+    val hasUnsavedChanges: StateFlow<Boolean> = _hasUnsavedChanges.asStateFlow()
+
     // 2. Debounced search state
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -43,13 +49,12 @@ class KeePassViewModel : ViewModel() {
     private val _searchResults = MutableStateFlow<List<Entry>>(emptyList())
     val searchResults: StateFlow<List<Entry>> = _searchResults.asStateFlow()
 
-    // Flattened, cached list of all entries in memory (updated only when database tree changes)
+    // Flattened, cached list of all entries in memory (rebuilt only when database structure changes)
     private var allEntriesCache: List<Entry> = emptyList()
 
     // 3. Fast O(1) in-memory lookups for tree navigation and operations
-    private val groupMap = mutableMapOf<UUID, Group>()
-    private val parentGroupMap = mutableMapOf<UUID, UUID>()
-    private val entryParentMap = mutableMapOf<UUID, UUID>()
+    private val groupByIdMap = mutableMapOf<UUID, Group>()
+    private val parentMap = mutableMapOf<UUID, UUID>()
 
     init {
         viewModelScope.launch {
@@ -63,15 +68,26 @@ class KeePassViewModel : ViewModel() {
     }
 
     /**
-     * Set or load a KeePass database, rebuilding all caches and maps in O(N) only once upon load.
+     * Set or load a KeePass database, rebuilding all caches and maps in O(N) once,
+     * then consolidating UI thread updates.
      */
     fun setDatabase(database: KeePassDatabase) {
-        _database.value = database
-        rebuildTreeCache(database.content.group)
-        val targetGroupId = _currentGroup.value?.uuid ?: database.content.group.uuid
-        updateCurrentGroup(targetGroupId)
-        if (_searchQuery.value.isNotBlank()) {
-            executeSearch(_searchQuery.value)
+        viewModelScope.launch(Dispatchers.Default) {
+            rebuildTreeCache(database.content.group)
+            val targetGroupId = _currentGroup.value?.uuid ?: database.content.group.uuid
+            val targetGroup = groupByIdMap[targetGroupId] ?: database.content.group
+
+            withContext(Dispatchers.Main) {
+                _database.value = database
+                _currentGroup.value = targetGroup
+                _currentGroupEntries.value = targetGroup.entries
+                _currentSubGroups.value = targetGroup.groups
+                _hasUnsavedChanges.value = false
+            }
+
+            if (_searchQuery.value.isNotBlank()) {
+                executeSearch(_searchQuery.value)
+            }
         }
     }
 
@@ -79,19 +95,18 @@ class KeePassViewModel : ViewModel() {
      * Rebuilds O(1) lookup maps and flattened entry cache when database changes.
      */
     private fun rebuildTreeCache(rootGroup: Group?) {
-        groupMap.clear()
-        parentGroupMap.clear()
-        entryParentMap.clear()
+        groupByIdMap.clear()
+        parentMap.clear()
         val entries = mutableListOf<Entry>()
 
         if (rootGroup != null) {
             fun traverse(current: Group, parentUuid: UUID?) {
-                groupMap[current.uuid] = current
+                groupByIdMap[current.uuid] = current
                 if (parentUuid != null) {
-                    parentGroupMap[current.uuid] = parentUuid
+                    parentMap[current.uuid] = parentUuid
                 }
                 for (entry in current.entries) {
-                    entryParentMap[entry.uuid] = current.uuid
+                    parentMap[entry.uuid] = current.uuid
                     entries.add(entry)
                 }
                 for (subGroup in current.groups) {
@@ -108,14 +123,17 @@ class KeePassViewModel : ViewModel() {
      * Select a group by its UUID with O(1) map lookup.
      */
     fun selectGroup(groupUuid: UUID) {
-        updateCurrentGroup(groupUuid)
+        val group = groupByIdMap[groupUuid] ?: return
+        _currentGroup.value = group
+        _currentGroupEntries.value = group.entries
+        _currentSubGroups.value = group.groups
     }
 
     /**
      * Select a group directly.
      */
     fun selectGroup(group: Group) {
-        updateCurrentGroup(group.uuid)
+        selectGroup(group.uuid)
     }
 
     /**
@@ -123,30 +141,20 @@ class KeePassViewModel : ViewModel() {
      */
     fun navigateUp(): Boolean {
         val curGroup = _currentGroup.value ?: return false
-        val parentUuid = parentGroupMap[curGroup.uuid] ?: return false
-        updateCurrentGroup(parentUuid)
+        val parentUuid = parentMap[curGroup.uuid] ?: return false
+        selectGroup(parentUuid)
         return true
     }
 
     /**
      * O(1) lookup for group by UUID.
      */
-    fun findGroupById(uuid: UUID): Group? = groupMap[uuid]
+    fun findGroupById(uuid: UUID): Group? = groupByIdMap[uuid]
 
     /**
      * O(1) lookup for parent group UUID of an entry.
      */
-    fun findParentGroupUuidForEntry(entryUuid: UUID): UUID? = entryParentMap[entryUuid]
-
-    /**
-     * Update the current group and emit small, granular sub-flows to prevent UI recomposition storms.
-     */
-    private fun updateCurrentGroup(groupUuid: UUID?) {
-        val group = groupUuid?.let { groupMap[it] } ?: _database.value?.content?.group
-        _currentGroup.value = group
-        _currentGroupEntries.value = group?.entries ?: emptyList()
-        _currentSubGroups.value = group?.groups ?: emptyList()
-    }
+    fun findParentGroupUuidForEntry(entryUuid: UUID): UUID? = parentMap[entryUuid]
 
     /**
      * Update search query - debounced via Flow to avoid tree traversal on every keystroke.
@@ -156,7 +164,7 @@ class KeePassViewModel : ViewModel() {
     }
 
     /**
-     * Fast search filtering against flattened in-memory cache.
+     * Fast search filtering against flattened in-memory cache without tree traversal.
      */
     private fun executeSearch(query: String) {
         if (query.isBlank()) {
@@ -177,43 +185,103 @@ class KeePassViewModel : ViewModel() {
         }
     }
 
-    // --- CRUD Operations ---
+    // --- CRUD Operations with Consolidated Main-Thread Updates ---
 
     /**
-     * Create an entry in target group and update database state.
+     * Create an entry in target group, rebuild cache, and apply state in a single withContext block.
      */
     fun createEntry(targetGroupUuid: UUID, entry: Entry) {
-        val db = _database.value ?: return
-        val newDb = db.modifyGroup(targetGroupUuid) {
-            copy(entries = entries + entry)
+        viewModelScope.launch(Dispatchers.Default) {
+            val db = _database.value ?: return@launch
+            val newDb = db.modifyGroup(targetGroupUuid) {
+                copy(entries = entries + entry)
+            }
+            rebuildTreeCache(newDb.content.group)
+            val curGroup = groupByIdMap[_currentGroup.value?.uuid] ?: newDb.content.group
+
+            withContext(Dispatchers.Main) {
+                _database.value = newDb
+                _currentGroup.value = curGroup
+                _currentGroupEntries.value = curGroup.entries
+                _currentSubGroups.value = curGroup.groups
+                _hasUnsavedChanges.value = true
+            }
+
+            if (_searchQuery.value.isNotBlank()) {
+                executeSearch(_searchQuery.value)
+            }
         }
-        setDatabase(newDb)
     }
 
     /**
-     * Update an existing entry and refresh state.
+     * Update an existing entry and consolidate state updates in a single withContext block.
      */
     fun updateEntry(entry: Entry) {
-        val db = _database.value ?: return
-        val newDb = db.modifyEntry(entry.uuid) { entry }
-        setDatabase(newDb)
+        viewModelScope.launch(Dispatchers.Default) {
+            val db = _database.value ?: return@launch
+            val newDb = db.modifyEntry(entry.uuid) { entry }
+            rebuildTreeCache(newDb.content.group)
+            val curGroup = groupByIdMap[_currentGroup.value?.uuid] ?: newDb.content.group
+
+            withContext(Dispatchers.Main) {
+                _database.value = newDb
+                _currentGroup.value = curGroup
+                _currentGroupEntries.value = curGroup.entries
+                _currentSubGroups.value = curGroup.groups
+                _hasUnsavedChanges.value = true
+            }
+
+            if (_searchQuery.value.isNotBlank()) {
+                executeSearch(_searchQuery.value)
+            }
+        }
     }
 
     /**
-     * Delete an entry by UUID and refresh state.
+     * Delete an entry by UUID and consolidate state updates in a single withContext block.
      */
     fun deleteEntry(entryUuid: UUID) {
-        val db = _database.value ?: return
-        val newDb = db.removeEntry(entryUuid)
-        setDatabase(newDb)
+        viewModelScope.launch(Dispatchers.Default) {
+            val db = _database.value ?: return@launch
+            val newDb = db.removeEntry(entryUuid)
+            rebuildTreeCache(newDb.content.group)
+            val curGroup = groupByIdMap[_currentGroup.value?.uuid] ?: newDb.content.group
+
+            withContext(Dispatchers.Main) {
+                _database.value = newDb
+                _currentGroup.value = curGroup
+                _currentGroupEntries.value = curGroup.entries
+                _currentSubGroups.value = curGroup.groups
+                _hasUnsavedChanges.value = true
+            }
+
+            if (_searchQuery.value.isNotBlank()) {
+                executeSearch(_searchQuery.value)
+            }
+        }
     }
 
     /**
-     * Move an entry to a target group using O(1) lookups and kotpass moveEntry modifier.
+     * Move an entry to a target group and consolidate state updates in a single withContext block.
      */
     fun moveEntry(entryUuid: UUID, targetGroupUuid: UUID) {
-        val db = _database.value ?: return
-        val newDb = db.moveEntry(entryUuid, targetGroupUuid)
-        setDatabase(newDb)
+        viewModelScope.launch(Dispatchers.Default) {
+            val db = _database.value ?: return@launch
+            val newDb = db.moveEntry(entryUuid, targetGroupUuid)
+            rebuildTreeCache(newDb.content.group)
+            val curGroup = groupByIdMap[_currentGroup.value?.uuid] ?: newDb.content.group
+
+            withContext(Dispatchers.Main) {
+                _database.value = newDb
+                _currentGroup.value = curGroup
+                _currentGroupEntries.value = curGroup.entries
+                _currentSubGroups.value = curGroup.groups
+                _hasUnsavedChanges.value = true
+            }
+
+            if (_searchQuery.value.isNotBlank()) {
+                executeSearch(_searchQuery.value)
+            }
+        }
     }
 }
