@@ -174,13 +174,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class CellLayoutCache(private val textMeasurer: TextMeasurer) {
-    private val cellCache = object : LinkedHashMap<Long, CachedCellLayout>(512, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, CachedCellLayout>?): Boolean {
-            return size > 600
-        }
-    }
-    private val colHeaderCache = HashMap<Long, CachedHeaderLayout>()
-    private val rowHeaderCache = HashMap<Long, CachedHeaderLayout>()
 
     data class CachedCellLayout(
         val text: String,
@@ -196,6 +189,17 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
         val isSelected: Boolean,
         val layout: TextLayoutResult
     )
+
+    private val cellCache = LinkedHashMap<Long, CachedCellLayout>(512, 0.75f, true)
+    private val colHeaderCache = HashMap<Long, CachedHeaderLayout>()
+    private val rowHeaderCache = HashMap<Long, CachedHeaderLayout>()
+
+    private fun putCellLayout(key: Long, layout: CachedCellLayout) {
+        if (cellCache.size >= 600) {
+            cellCache.remove(cellCache.keys.first())
+        }
+        cellCache[key] = layout
+    }
 
     fun getCellLayout(
         r: Int,
@@ -225,7 +229,7 @@ class CellLayoutCache(private val textMeasurer: TextMeasurer) {
                 overflow = TextOverflow.Ellipsis
             )
         }
-        cellCache[key] = CachedCellLayout(text, isHeader, isWrapped, maxWidthPx, style.color, layout)
+        putCellLayout(key, CachedCellLayout(text, isHeader, isWrapped, maxWidthPx, style.color, layout))
         return layout
     }
 

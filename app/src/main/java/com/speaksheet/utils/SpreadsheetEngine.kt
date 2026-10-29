@@ -3050,6 +3050,9 @@ class SpreadsheetEngine {
         )
         val prevState = undoStack.removeFirst()
         redoStack.addFirst(currentState)
+        if (redoStack.size > 50) {
+            redoStack.removeLast()
+        }
 
         cells.clear()
         for ((k, v) in prevState.cells) {
@@ -3103,6 +3106,9 @@ class SpreadsheetEngine {
         )
         val nextState = redoStack.removeFirst()
         undoStack.addFirst(currentState)
+        if (undoStack.size > 50) {
+            undoStack.removeLast()
+        }
 
         cells.clear()
         for ((k, v) in nextState.cells) {

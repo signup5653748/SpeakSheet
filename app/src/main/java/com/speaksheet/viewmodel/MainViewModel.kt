@@ -31,8 +31,9 @@ import kotlin.math.roundToInt
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val settingsRepository = SettingsRepository(application)
-    private val recentFileDao = AppDatabase.getDatabase(application).recentFileDao()
-    private val sheetDao = AppDatabase.getDatabase(application).sheetDao()
+    private val database = AppDatabase.getDatabase(application)
+    private val recentFileDao = database.recentFileDao()
+    private val sheetDao = database.sheetDao()
     
     val ttsManager = TtsManager(application)
     val spreadsheetEngine = SpreadsheetEngine()

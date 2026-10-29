@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.speaksheet"
   compileSdk = 34
 
   defaultConfig {
-    applicationId = "com.aistudio.vault.secure"
+    applicationId = "com.speaksheet"
     minSdk = 26
     targetSdk = 34
     versionCode = 1

@@ -25,6 +25,10 @@ class TtsManager(context: Context) : TextToSpeech.OnInitListener {
     private val _availableVoices = MutableStateFlow<List<Voice>>(emptyList())
     val availableVoices: StateFlow<List<Voice>> = _availableVoices.asStateFlow()
 
+    // Throttle rapid speak() calls to avoid TTS interrupt storms
+    private var lastSpeakTime = 0L
+    private val SPEAK_MIN_INTERVAL_MS = 400L
+
     init {
         try {
             tts = TextToSpeech(context.applicationContext, this)
@@ -78,12 +82,16 @@ class TtsManager(context: Context) : TextToSpeech.OnInitListener {
     }
 
     fun speak(text: String) {
-        if (_isInitialized.value && text.isNotBlank()) {
-            try {
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "speaksheet_utterance")
-            } catch (e: Exception) {
-                Log.e("TtsManager", "Error speaking text", e)
-            }
+        if (!_isInitialized.value || text.isBlank()) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastSpeakTime < SPEAK_MIN_INTERVAL_MS) return
+        lastSpeakTime = now
+
+        try {
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "speaksheet_utterance")
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error speaking text", e)
         }
     }
     

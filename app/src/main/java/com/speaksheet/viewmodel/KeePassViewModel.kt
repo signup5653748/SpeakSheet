@@ -1,4 +1,4 @@
-package com.example.viewmodel
+package com.speaksheet.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -53,10 +53,7 @@ class KeePassViewModel : ViewModel() {
 
     private var searchJob: Job? = null
 
-    // Flattened, cached list of all entries in memory (rebuilt only when database structure changes)
-    private var allEntriesCache: List<Entry> = emptyList()
-
-    // 3. Fast O(1) in-memory lookups for tree navigation and operations
+    // Fast O(1) in-memory lookups for tree navigation and operations
     private var groupByIdMap: Map<UUID, Group> = emptyMap()
     private var parentUuidMap: Map<UUID, UUID> = emptyMap()
 
@@ -85,12 +82,13 @@ class KeePassViewModel : ViewModel() {
     }
 
     /**
-     * Rebuilds O(1) lookup maps and flattened entry cache when database changes.
+     * Rebuilds O(1) lookup maps when database changes.
+     * Entry cache is intentionally not flattened — entries are loaded lazily per group
+     * to avoid holding the entire database in memory.
      */
     private fun rebuildLookupMaps(db: KeePassDatabase) {
         val groups = mutableMapOf<UUID, Group>()
         val parents = mutableMapOf<UUID, UUID>()
-        val entries = mutableListOf<Entry>()
 
         fun traverse(current: Group, parentUuid: UUID?) {
             groups[current.uuid] = current
@@ -99,7 +97,6 @@ class KeePassViewModel : ViewModel() {
             }
             for (entry in current.entries) {
                 parents[entry.uuid] = current.uuid
-                entries.add(entry)
             }
             for (subGroup in current.groups) {
                 traverse(subGroup, current.uuid)
@@ -109,7 +106,6 @@ class KeePassViewModel : ViewModel() {
         traverse(db.content.group, null)
         groupByIdMap = groups
         parentUuidMap = parents
-        allEntriesCache = entries
     }
 
     /**
@@ -165,25 +161,38 @@ class KeePassViewModel : ViewModel() {
     }
 
     /**
-     * Fast search filtering against flattened in-memory cache without tree traversal.
+     * Search filtering against live group trees without a flattened in-memory cache.
      */
     private fun executeSearch(query: String) {
         if (query.isBlank()) {
             _searchResults.value = emptyList()
             return
         }
-        val q = query.trim()
-        _searchResults.value = allEntriesCache.filter { entry ->
-            val title = entry.get(BasicField.Title)?.content ?: ""
-            val username = entry.get(BasicField.UserName)?.content ?: ""
-            val url = entry.get(BasicField.Url)?.content ?: ""
-            val notes = entry.get(BasicField.Notes)?.content ?: ""
-            title.contains(q, ignoreCase = true) ||
-                username.contains(q, ignoreCase = true) ||
-                url.contains(q, ignoreCase = true) ||
-                notes.contains(q, ignoreCase = true) ||
-                entry.fields.values.any { it.content.contains(q, ignoreCase = true) }
+        val q = query.trim().lowercase()
+        val db = _database.value ?: return
+
+        fun collectMatches(group: Group, out: MutableList<Entry>) {
+            for (entry in group.entries) {
+                val title = entry.get(BasicField.Title)?.content ?: ""
+                val username = entry.get(BasicField.UserName)?.content ?: ""
+                val url = entry.get(BasicField.Url)?.content ?: ""
+                val notes = entry.get(BasicField.Notes)?.content ?: ""
+                if (title.contains(q, ignoreCase = true) ||
+                    username.contains(q, ignoreCase = true) ||
+                    url.contains(q, ignoreCase = true) ||
+                    notes.contains(q, ignoreCase = true) ||
+                    entry.fields.values.any { it.content.contains(q, ignoreCase = true) }) {
+                    out.add(entry)
+                }
+            }
+            for (subGroup in group.groups) {
+                collectMatches(subGroup, out)
+            }
         }
+
+        val results = mutableListOf<Entry>()
+        collectMatches(db.content.group, results)
+        _searchResults.value = results
     }
 
     // --- CRUD Operations with Consolidated Main-Thread Updates ---
